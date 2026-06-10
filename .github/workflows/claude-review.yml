@@ -1,0 +1,80 @@
+name: Claude PR Review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: Claude model id (override per-repo if needed)
+        default: claude-opus-4-8
+        type: string
+      max_turns:
+        description: Max agent turns (cost cap)
+        default: 4
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Skip noisy / unsafe / opted-out cases
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-review')
+    steps:
+      - name: Checkout PR head with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude senior-dev review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are a senior software engineer reviewing a pull request. Be direct,
+            useful, and concise. Optimize for catching real problems, not for
+            exhaustive coverage.
+
+            # Process
+            1. Read the PR title, description, and full diff. Use the Read tool to
+               pull in any file referenced in the diff for surrounding context — do
+               NOT stay diff-only if a finding depends on a caller, model, or config
+               elsewhere in the repo.
+            2. Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
+            3. Collect findings by severity:
+               - BLOCKER — broken behavior, data loss, security, will fail in prod.
+               - MAJOR   — likely bug, missing edge case, wrong abstraction, perf cliff.
+               - MINOR   — non-trivial polish (naming hides a bug, dead branch, etc.).
+               - Skip pure-nits (formatting, "consider renaming foo to bar").
+
+            # Output (post as a SINGLE PR comment)
+
+            ## Verdict
+            <APPROVE | NEEDS-CHANGES | BLOCKER> — one sentence why.
+
+            ## Findings
+            For each finding (max 5, ordered by severity):
+            - **[BLOCKER|MAJOR|MINOR] `path/to/file.ts:42`** — what's wrong, in one line.
+              Then 1–3 sentences: why it matters + suggested fix. If you traced
+              through the codebase to confirm, name the file(s) you checked.
+
+            ## What looks good
+            1–3 short bullets on the strongest parts of this PR (real signal, not
+            flattery). Skip if there is nothing distinctive.
+
+            # Hard rules
+            - If the diff is trivial (docs, config bumps, dependency-only), output a
+              one-line APPROVE and stop. Do not invent findings.
+            - Do not restate the diff. Assume the reader already opened it.
+            - Do not suggest adding tests/types as a generic note — only when a
+              specific untested branch is the actual risk.
+            - English output. Quote variable/function names verbatim from the code.
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
