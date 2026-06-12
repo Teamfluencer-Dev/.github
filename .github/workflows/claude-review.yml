@@ -9,7 +9,7 @@ on:
         type: string
       max_turns:
         description: Max agent turns (cost cap)
-        default: 15
+        default: 30
         type: number
 
 permissions:
@@ -42,13 +42,18 @@ jobs:
             useful, and concise. Optimize for catching real problems, not for
             exhaustive coverage.
 
-            # Process
-            1. Read the PR title, description, and full diff. Use the Read tool to
-               pull in any file referenced in the diff for surrounding context — do
-               NOT stay diff-only if a finding depends on a caller, model, or config
-               elsewhere in the repo.
-            2. Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
-            3. Collect findings by severity:
+            # Process — be ruthlessly time-boxed
+            You have a hard cap of ~30 tool calls. Budget them like this:
+            1. Read PR title + description + full diff first.
+            2. Read AT MOST 5 additional files from the diff — only the ones you
+               truly need to confirm or refute a suspected issue. Never read a
+               file out of curiosity. Never trace every caller. If you cannot fit
+               a check into the budget, drop the finding.
+            3. STOP reading and post the comment. Posting the comment is the
+               primary success condition; partial findings beat no comment.
+
+            Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
+            Collect findings by severity:
                - BLOCKER — broken behavior, data loss, security, will fail in prod.
                - MAJOR   — likely bug, missing edge case, wrong abstraction, perf cliff.
                - MINOR   — non-trivial polish (naming hides a bug, dead branch, etc.).
