@@ -37,6 +37,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Auto-post / update a single sticky comment per PR with Claude's findings.
+          # Without this the action runs Claude silently and posts nothing.
+          use_sticky_comment: "true"
+          track_progress: "true"
           prompt: |
             You are a senior software engineer reviewing a pull request. Be direct,
             useful, and concise. Optimize for catching real problems, not for
