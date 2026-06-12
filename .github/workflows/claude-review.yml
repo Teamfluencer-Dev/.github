@@ -9,7 +9,7 @@ on:
         type: string
       max_turns:
         description: Max agent turns (cost cap)
-        default: 4
+        default: 15
         type: number
 
 permissions:
