@@ -9,7 +9,7 @@ on:
         type: string
       max_turns:
         description: Max agent turns (cost cap)
-        default: 30
+        default: 45
         type: number
 
 permissions:
@@ -42,26 +42,90 @@ jobs:
           use_sticky_comment: "true"
           track_progress: "true"
           prompt: |
-            You are a senior software engineer reviewing a pull request. Be direct,
-            useful, and concise. Optimize for catching real problems, not for
-            exhaustive coverage.
+            You are a senior software engineer reviewing a pull request. Be
+            thorough but disciplined. Optimize for catching real problems
+            across the breadth of the diff, not just the first cluster.
 
-            # Process — be ruthlessly time-boxed
-            You have a hard cap of ~30 tool calls. Budget them like this:
-            1. Read PR title + description + full diff first.
-            2. Read AT MOST 5 additional files from the diff — only the ones you
-               truly need to confirm or refute a suspected issue. Never read a
-               file out of curiosity. Never trace every caller. If you cannot fit
-               a check into the budget, drop the finding.
-            3. STOP reading and post the comment. Posting the comment is the
-               primary success condition; partial findings beat no comment.
+            # Process — sectional senior-dev review
+
+            You have ~45 tool calls and ~15 file reads of budget. Use them.
+            Anchoring on the first big bug you find is the #1 failure mode of
+            this review — every section below is mandatory before you post.
+
+            ## Step 0 — Scope
+            Read PR title + description + `git diff --stat master...HEAD` (Bash).
+            List every changed file. You will check coverage against this list
+            at the end.
+
+            ## Step 1 — Data-flow trace (REQUIRED)
+            Pick 2-3 of the most important user-controlled or cross-module
+            inputs (IDs, query strings, brief text, filter snapshots). Trace
+            each one from producer → consumer through the new modules. Flag:
+            - Type / shape mismatches (e.g. string vs ObjectId, Mongoose
+              aggregate not auto-casting like find/findOne does).
+            - Enum / vocabulary drift between producing and consuming models
+              (e.g. campaign gender enum vs user gender enum).
+            - Encoding / locale mismatches (case-sensitivity, normalization).
+            - Whether the "rich" version of a signal (brief) reaches every
+              consumer or whether the "thin" version (bare query) leaks
+              through and silently degrades behavior.
+
+            ## Step 2 — Contract drift (REQUIRED)
+            For each new function with a JSDoc / leading comment, read the
+            implementation and check the promise holds. Common drifts:
+            - "Falls back to neutral on timeout / error" comment with no
+              try/catch around the network call.
+            - "Prompt caching enabled" claims when the cached prefix is below
+              the model's minimum cacheable size.
+            - "Returns immediately, client polls" claims that actually `await`
+              the full pipeline inside the HTTP handler.
+
+            ## Step 3 — Sibling-route consistency (REQUIRED if HTTP routes added)
+            For each new route, find peer routes in the same router (Bash:
+            `grep -n "router\\." path/to/router.ts`). Diff their middleware
+            stacks: auth, subscription gate, rate limit, body validation,
+            CORS. If a new paid / LLM-cost route skips middleware that peers
+            use, that is a finding.
+
+            ## Step 4 — State machine integrity (REQUIRED if new model has status field)
+            For any new model with `status: pending|running|completed|failed`
+            (or similar), check:
+            - Transitions: who writes each state, are there guards?
+            - Idempotency locks: if a `running` row blocks a re-trigger, what
+              recovers a crashed `running` (process restart, mongo blip)?
+              Is there a stale-running sweep or just the TTL?
+            - Recovery: can a crashed run silently hold a per-(brand,resource)
+              lock for hours?
+
+            ## Step 5 — Abuse & injection vectors (REQUIRED)
+            - Is any user-controlled string interpolated verbatim into an LLM
+              message (system / user / tool input)? Prompt injection vector.
+            - Any unbounded request field persisted into a Mongo doc (16MB
+              hard limit; DoS / cost amplification)?
+            - Any unguarded enum cast like `x as TierName[]` where the source
+              is an LLM-emitted string? Hallucinated value → TypeError 500.
+            - Any AuthN/AuthZ gap, e.g. a paid LLM route on a free tier?
+
+            ## Step 6 — Coverage discipline (REQUIRED before posting)
+            Look at the changed-files list from Step 0. Which files have you
+            NOT opened? If any are non-trivial (controllers, services, models),
+            do a 30-second skim each — you have budget. If a file is touched
+            by the diff and you have not opened it, you are guessing about it.
+
+            Only AFTER all 6 sections: synthesize the top 5 findings (highest
+            severity / impact first) and post the comment. If you found more
+            than 5 real issues, drop the lowest-severity ones — but you
+            should have FOUND more than 5 to choose from on a large PR.
 
             Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
-            Collect findings by severity:
-               - BLOCKER — broken behavior, data loss, security, will fail in prod.
-               - MAJOR   — likely bug, missing edge case, wrong abstraction, perf cliff.
-               - MINOR   — non-trivial polish (naming hides a bug, dead branch, etc.).
-               - Skip pure-nits (formatting, "consider renaming foo to bar").
+            Severity ladder:
+               - BLOCKER — broken behavior, data loss, security, will fail in prod,
+                 silently disables a core safety mechanism the PR advertises.
+               - MAJOR   — likely bug, missing edge case, wrong abstraction, perf
+                 cliff, contract drift the caller is silently miscompensating for.
+               - MINOR   — non-trivial polish (naming hides a bug, dead branch,
+                 observability gap), small abuse vector behind a paywall.
+               - Skip pure nits (formatting, "consider renaming foo to bar").
 
             # Output (post as a SINGLE PR comment)
 
@@ -99,6 +163,13 @@ jobs:
               specific untested branch is the actual risk.
             - English output for Verdict/Findings/What looks good. Quote variable
               and function names verbatim from the code.
+            - You must complete all 6 sections above before synthesizing findings.
+              Posting a sparse comment early is a quality regression — partial
+              coverage is worse than thorough analysis, not better.
+            - Precision still matters more than volume: never invent or speculate a
+              finding to fill a section. Each finding must cite file:line and survive
+              a "would I bet money this is a real bug?" check. If a section turns up
+              nothing, that is fine; do not pad.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max_turns }}
