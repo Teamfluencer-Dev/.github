@@ -33,6 +33,69 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Determine the base ref dynamically (master/main) so the diff command works
+      # across all four caller repos (master for the big-4, main for any future addition).
+      - name: Resolve base ref
+        id: base
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          echo "ref=$BASE" >> $GITHUB_OUTPUT
+
+      # v10 #2 — Static review hints (deterministic grep over the PR diff).
+      # Front-loads suspect patterns into the prompt so Claude does not waste
+      # the first turns anchoring on the first file it opens. CANDIDATES not
+      # findings — Claude must dismiss-with-reason or promote each row.
+      - name: Static review hints
+        id: hints
+        run: |
+          BASE_REF="origin/${{ steps.base.outputs.ref }}"
+          # Bring base ref into local refs (fetch-depth: 0 above guarantees history is here)
+          git fetch origin "${{ steps.base.outputs.ref }}" --depth=1 || true
+          run_grep() {
+            local label="$1"; shift
+            local pattern="$1"; shift
+            echo ""
+            echo "### $label"
+            git diff "$BASE_REF...HEAD" -- '*.ts' '*.tsx' '*.js' 2>/dev/null \
+              | grep -nE "^\+" \
+              | grep -nE "$pattern" \
+              | head -25 \
+              || echo "  (no matches)"
+          }
+          {
+            echo "## Suspect candidate table (regex-based — CANDIDATES, not findings)"
+            echo "These are deterministic grep hits over the diff. For each row Claude must"
+            echo "either dismiss with reason or promote to a finding under the relevant lens."
+            run_grep "Unguarded LLM/enum casts (Step 5.5c)" 'as (TierName|Gender|Status|Category|Tier|Role)\[\]|as \"[a-z_]+\"'
+            run_grep "Hardcoded snapshot defaults to an LLM (Step 5.5b)" '(followerMin|followerMax|verifiedOnly|includeCelebrity|cost_usd):\s*(0|false|true|999_?999)'
+            run_grep "Retrieval call sites (Step 5.5a — pair with brief sites below)" 'pineconeCandidatePool|vectorSearch|embedQuery|getEmbedding'
+            run_grep "Brief / scorer call sites (Step 5.5a — pair with retrieval sites above)" 'brief\s*=|llmScorer|scorerBrief|messages\.create|chat\.completions'
+            run_grep "Unbounded array growth (Step 5 abuse)" '\.push\(|\$push'
+            run_grep "Cache read sites (Step 5.5d — verify invalidation)" 'cache\.(get|wrap)|memoize|findCached'
+          } > /tmp/hints.md
+          {
+            echo 'hints<<HINTS_EOF'
+            cat /tmp/hints.md
+            echo 'HINTS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # v10 #3 — Load repo-specific conventions (named invariants INV-###).
+      # Empty fallback if the file does not exist — does not break the workflow.
+      - name: Load repo conventions
+        id: conv
+        run: |
+          FILE=.github/claude-review-context.md
+          if [ -f "$FILE" ]; then
+            CONV="$(cat "$FILE")"
+          else
+            CONV="(no repo-specific conventions file found at .github/claude-review-context.md)"
+          fi
+          {
+            echo 'conv<<CONV_EOF'
+            echo "$CONV"
+            echo 'CONV_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Claude senior-dev review
         uses: anthropics/claude-code-action@v1
         with:
@@ -46,6 +109,24 @@ jobs:
             thorough but disciplined. Optimize for catching real problems
             across the breadth of the diff, not just the first cluster.
 
+            # Inputs front-loaded for you
+
+            ## Repo-specific enforceable invariants (cite by INV-### when relevant)
+            The reviewing team has codified canonical guards and patterns for this
+            repo. When the diff touches a pattern named below, you MUST verify the
+            guard is present or flag the violation. If a peer file already implements
+            the guard, name it (file:line) in your finding.
+
+            ${{ steps.conv.outputs.conv }}
+
+            ## Static review hints (CANDIDATES — dismiss with reason or promote)
+            The following table is deterministic grep over the PR diff. Treat each
+            row as a CANDIDATE for the relevant lens, not as a confirmed finding.
+            Read these BEFORE opening files — they are the suggested starting
+            point for your file inventory in Step 0.
+
+            ${{ steps.hints.outputs.hints }}
+
             # Process — sectional senior-dev review
 
             You have ~45 tool calls and ~15 file reads of budget. Use them.
@@ -53,9 +134,10 @@ jobs:
             this review — every section below is mandatory before you post.
 
             ## Step 0 — Scope
-            Read PR title + description + `git diff --stat master...HEAD` (Bash).
-            List every changed file. You will check coverage against this list
-            at the end.
+            Read PR title + description + `git diff --stat ${{ steps.base.outputs.ref }}...HEAD` (Bash).
+            List every changed file. Cross-reference against the static-hint
+            candidate table above — that table is your prioritized starting
+            inventory. You will check coverage against this list at the end.
 
             ## Step 1 — Data-flow trace (REQUIRED)
             Pick 2-3 of the most important user-controlled or cross-module
@@ -106,26 +188,101 @@ jobs:
               is an LLM-emitted string? Hallucinated value → TypeError 500.
             - Any AuthN/AuthZ gap, e.g. a paid LLM route on a free tier?
 
+            ## Step 5.5 — LLM-codepath specifics (REQUIRED if diff touches prompts, tool definitions, embeddings, or Anthropic/OpenAI SDK calls; skip otherwise)
+            These four checks address the failure modes of LLM-glue code that
+            generic senior-dev lenses miss. Each is a BLOCKER class when present.
+
+            **(a) Retrieval ↔ scoring signal parity** — Does the signal embedded
+            for vector / semantic retrieval match the signal the downstream LLM
+            scorer/reasoner actually sees? Concretely: if retrieval calls
+            `pineconeCandidatePool(req.query, ...)` while the LLM scorer receives
+            a `brief` that is `campaignAudience?.brief || req.brief || req.query`,
+            then the candidate pool was selected against a weaker signal than the
+            one the LLM ranks against. This silently miscalibrates the entire
+            feature. **Quote both call sites with file:line in the finding.**
+
+            **(b) Snapshot fidelity to persisted state** — When the controller
+            builds a "currentX" snapshot to hand to a refine / planner LLM, every
+            field in the snapshot must EITHER be read from persisted state at
+            snapshot time OR be an explicitly documented default. Hardcoded `0`,
+            `false`, `''`, or `[]` values for fields the LLM is expected to reason
+            about (e.g. `followerMin: 0`, `verifiedOnly: false`) is BLOCKER — the
+            LLM is being lied to about current state and will produce a patch
+            against a phantom baseline.
+
+            **(c) Unguarded LLM-output cast** — Every `as XEnum[]`, `as Status`,
+            or `LOOKUP_TABLE[llmValue]` access on a value originating from an LLM
+            tool output is suspect. The Anthropic / OpenAI SDK does not enforce
+            enums at runtime — Haiku and other small models occasionally violate
+            them. Search for a whitelist sanitizer in a PEER file (e.g.
+            `sanitizeTiers` in a sibling controller). If a peer guard exists and
+            this code path skipped it, BLOCKER + cite the peer file:line as the
+            canonical fix.
+
+            **(d) Patch-empty semantics** — In refine / patch flows, controllers
+            commonly write `patch.x && patch.x.length > 0 ? patch.x : undefined`.
+            Trace `undefined` downstream: does it mean "no change" (correct) or
+            does it fall back to a default (silently destructive)? A refine that
+            doesn't touch tiers should NOT silently reset tiers to default — that
+            quietly narrows the audience on every refine call. Cite the downstream
+            consumer file:line where the silent default is applied.
+
             ## Step 6 — Coverage discipline (REQUIRED before posting)
             Look at the changed-files list from Step 0. Which files have you
             NOT opened? If any are non-trivial (controllers, services, models),
             do a 30-second skim each — you have budget. If a file is touched
             by the diff and you have not opened it, you are guessing about it.
 
-            Only AFTER all 6 sections: synthesize the top 5 findings (highest
+            ## Step 7 — Self-critique (REQUIRED before synthesizing the comment)
+            This is your precision floor. Run all four checks before deciding
+            which findings to keep.
+
+            **(a) Bet-money test** — For each candidate finding, ask: "Would I
+            bet $100 of my own money this is a real bug?" If no, drop it.
+            Especially: do NOT speculate about model id formats (e.g. "claude-opus-4-7
+            might 400 because it lacks a date suffix" — this is false, undated
+            aliases are valid), SDK internal behaviors, or "might do X sometimes"
+            claims. If a claim did not surface as a clear finding in Steps 1–6,
+            do NOT invent it now to fill the section.
+
+            **(b) Anchor check** — Are 3 or more of your findings in the same
+            file or in immediately adjacent files? If yes, you are anchoring.
+            Open 2 more files from the Step 0 changed-files inventory you have
+            NOT yet looked at and do a focused pass — frequently the missed
+            BLOCKER lives in the file you didn't open.
+
+            **(c) Severity recalibration** — Re-read each finding against this
+            tightened ladder before committing to a severity label:
+               - BLOCKER — production breaks, data loss / corruption, security
+                 hole, OR silently disables a core safety mechanism the PR
+                 itself advertises (e.g. a cost cap that never fires).
+               - MAJOR — likely bug under realistic conditions, contract drift
+                 the caller silently miscompensates for, or perf cliff at scale.
+               - MINOR — non-trivial polish, observability gap, small abuse
+                 vector behind a paywall.
+               - Negative example (DO NOT post): "Model id might be wrong because
+                 it lacks a date suffix" — 0/10 bet-money. Skip silently.
+
+            **(d) Coverage gap final pass** — Is there any file in the Step 0
+            inventory with >100 changed lines you still have not opened? Open
+            it now and skim. Better to spend 2 more turns than to ship a sparse
+            comment.
+
+            Only AFTER Steps 1–7: synthesize the top 5 findings (highest
             severity / impact first) and post the comment. If you found more
             than 5 real issues, drop the lowest-severity ones — but you
             should have FOUND more than 5 to choose from on a large PR.
 
             Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
-            Severity ladder:
+            Severity ladder (same as Step 7c, repeated for synthesis):
                - BLOCKER — broken behavior, data loss, security, will fail in prod,
                  silently disables a core safety mechanism the PR advertises.
                - MAJOR   — likely bug, missing edge case, wrong abstraction, perf
                  cliff, contract drift the caller is silently miscompensating for.
                - MINOR   — non-trivial polish (naming hides a bug, dead branch,
                  observability gap), small abuse vector behind a paywall.
-               - Skip pure nits (formatting, "consider renaming foo to bar").
+               - Skip pure nits (formatting, "consider renaming foo to bar") and
+                 anything that fails the bet-money test in Step 7a.
 
             # Output (post as a SINGLE PR comment)
 
@@ -163,13 +320,18 @@ jobs:
               specific untested branch is the actual risk.
             - English output for Verdict/Findings/What looks good. Quote variable
               and function names verbatim from the code.
-            - You must complete all 6 sections above before synthesizing findings.
-              Posting a sparse comment early is a quality regression — partial
-              coverage is worse than thorough analysis, not better.
+            - You must complete all 7 process sections (including Step 5.5 if applicable
+              and Step 7 always) before synthesizing findings. Posting a sparse comment
+              early is a quality regression — partial coverage is worse than thorough
+              analysis, not better.
             - Precision still matters more than volume: never invent or speculate a
               finding to fill a section. Each finding must cite file:line and survive
-              a "would I bet money this is a real bug?" check. If a section turns up
-              nothing, that is fine; do not pad.
+              the Step 7a bet-money test. If a section turns up nothing, that is fine;
+              do not pad.
+            - For every BLOCKER you call from Step 5.5 (a/b/c/d) or from an INV-### in
+              the conventions file, cite the canonical guard / sibling implementation
+              (e.g. `sanitizeTiers` at `aiInfluencerDiscovery.controller.ts:78`) so the
+              dev can fix it in one shot.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ inputs.max_turns }}
