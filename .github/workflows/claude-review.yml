@@ -9,7 +9,7 @@ on:
         type: string
       max_turns:
         description: Max agent turns (cost cap)
-        default: 45
+        default: 60
         type: number
 
 permissions:
@@ -62,6 +62,28 @@ jobs:
               | head -25 \
               || echo "  (no matches)"
           }
+
+          # v11 test coverage delta — deterministic counts of source vs test file
+          # changes and enumeration of new endpoints / pages. This is Step 8 input.
+          NAME_ONLY=$(git diff --name-only "$BASE_REF...HEAD" 2>/dev/null || echo "")
+          SRC_FILES_CHANGED=$(printf '%s\n' "$NAME_ONLY" \
+            | grep -E '\.(ts|tsx|js|jsx)$' \
+            | grep -vE '(test|spec|__tests__|cypress|e2e|mock|fixture)' \
+            | wc -l | tr -d ' ')
+          TEST_FILES_CHANGED=$(printf '%s\n' "$NAME_ONLY" \
+            | grep -E '(\.test\.|\.spec\.|\.cy\.|__tests__/|cypress/(e2e|integration)/)' \
+            | wc -l | tr -d ' ')
+          NEW_ROUTES=$(git diff "$BASE_REF...HEAD" 2>/dev/null \
+            | grep -E '^\+' \
+            | grep -oE 'router\.(get|post|put|patch|delete)\("[^"]+"' \
+            | head -15 || true)
+          NEW_PAGES=$(printf '%s\n' "$NAME_ONLY" \
+            | grep -E '(pages?/|app/.*/(page|route)\.tsx?|src/pages/)' \
+            | head -15 || true)
+          NEW_CY_SPECS=$(printf '%s\n' "$NAME_ONLY" \
+            | grep -E '(\.cy\.(ts|tsx|js)$|cypress/(e2e|integration)/)' \
+            | head -10 || true)
+
           {
             echo "## Suspect candidate table (regex-based — CANDIDATES, not findings)"
             echo "These are deterministic grep hits over the diff. For each row Claude must"
@@ -72,6 +94,35 @@ jobs:
             run_grep "Brief / scorer call sites (Step 5.5a — pair with retrieval sites above)" 'brief\s*=|llmScorer|scorerBrief|messages\.create|chat\.completions'
             run_grep "Unbounded array growth (Step 5 abuse)" '\.push\(|\$push'
             run_grep "Cache read sites (Step 5.5d — verify invalidation)" 'cache\.(get|wrap)|memoize|findCached'
+
+            echo ""
+            echo "### Test file coverage delta (Step 8 input)"
+            echo "  src_files_changed:  $SRC_FILES_CHANGED"
+            echo "  test_files_changed: $TEST_FILES_CHANGED"
+            if [ "$SRC_FILES_CHANGED" -gt 0 ] && [ "$TEST_FILES_CHANGED" = "0" ]; then
+              echo "  >> ZERO test files touched for $SRC_FILES_CHANGED source-file changes — Step 8 must run."
+            fi
+            echo ""
+            echo "  New routes added:"
+            if [ -n "$NEW_ROUTES" ]; then
+              echo "$NEW_ROUTES" | sed 's/^/    /'
+            else
+              echo "    (none)"
+            fi
+            echo ""
+            echo "  New pages / route files:"
+            if [ -n "$NEW_PAGES" ]; then
+              echo "$NEW_PAGES" | sed 's/^/    /'
+            else
+              echo "    (none)"
+            fi
+            echo ""
+            echo "  New Cypress / E2E specs added:"
+            if [ -n "$NEW_CY_SPECS" ]; then
+              echo "$NEW_CY_SPECS" | sed 's/^/    /'
+            else
+              echo "    (none)"
+            fi
           } > /tmp/hints.md
           {
             echo 'hints<<HINTS_EOF'
@@ -268,10 +319,82 @@ jobs:
             it now and skim. Better to spend 2 more turns than to ship a sparse
             comment.
 
-            Only AFTER Steps 1–7: synthesize the top 5 findings (highest
-            severity / impact first) and post the comment. If you found more
-            than 5 real issues, drop the lowest-severity ones — but you
-            should have FOUND more than 5 to choose from on a large PR.
+            ## Step 8 — Test discipline (REQUIRED if diff adds/changes source files under `src/`, `app/`, or component/service directories; skip for docs/config/dependency-only PRs)
+
+            Correctness lensiyle iyisin. Şimdi PR gerçekten test edilmiş mi?
+            Look at the "Test file coverage delta" row of the hint pack — that
+            is your starting signal. Then walk these five sub-checks:
+
+            **(a) Test artefact presence** — For every new / substantially
+            changed source file listed in the delta, is there a matching test
+            file added or updated in the same PR? Missing test artefact for:
+              - a new HTTP endpoint / route → MAJOR (BLOCKER if the endpoint
+                touches auth / money / PII / LLM cost).
+              - a new React page / Cypress-testable screen → MAJOR default.
+              - a new model / schema (migration surface) → MAJOR.
+              - a new util / pure function → MINOR unless it is the primary
+                business logic of the PR.
+            Consult the repo's `## Test Conventions` (in the invariants above)
+            for the canonical spec location and runner. Cite the convention
+            (e.g. INV-T01) in the finding.
+
+            **(b) Test quality** — If a test file WAS added, actually OPEN and
+            READ it. Common weaknesses that count as findings:
+              - Assertion only checks status code (`expect(res.status).toBe(200)`)
+                but does not assert response shape.
+              - Endpoint returns a list but the test does not assert ordering
+                / filtering / pagination correctness. This is the classic
+                "200 dönüyor ama sıralı mı?" gap — call it out explicitly.
+              - Cypress spec `cy.intercept()`s the API but never `cy.visit()`s
+                the page — no real UI interaction, so the spec is API-mock
+                only and not a true E2E test.
+              - The test imports the changed code but exercises a sibling
+                path — the actual new branch is not covered.
+              - No edge cases: unauthorized, wrong role, empty result set,
+                upstream 500, timeout, invalid input, pagination limit.
+
+            **(c) Missing scenarios enumeration** — For each new endpoint /
+            screen, the PR should test AT LEAST:
+              - Happy path with meaningful shape/content assertion.
+              - Auth / role rejection (unauthorized, wrong role).
+              - Empty / zero-result case.
+              - Ordering / filtering correctness (REQUIRED for list-returning
+                endpoints).
+              - Error path (upstream 500, network timeout, invalid input).
+            Enumerate ONLY the missing scenarios in the output — do not repeat
+            what is already covered.
+
+            **(d) AI-verifiable smoke test suggestion** — For endpoints /
+            flows that return LLM output or semantic results (search,
+            recommendation, generation), suggest a concrete smoke-test
+            template in the repo's actual runner:
+              - Example: "For POST /ai-influencer-discovery: mocha smoke test
+                = call with fixture campaign 'test-brand'; assert
+                `results.length >= 5` AND `results[0].confidence >= 0.5` AND
+                `results` are ordered by descending confidence."
+              - Use the specific framework the repo uses (mocha, vitest, jest,
+                cypress) — do NOT propose a generic pseudocode.
+
+            **(e) Manual QA checklist** — For flows the AI cannot verify
+            reliably (visual UI polish, real third-party auth, mobile screens,
+            LLM semantic subjective quality), produce a 4-8 item checklist
+            the PR author must run before merge. Items must be concrete and
+            observable. Example:
+              - [ ] Log in as brand user in staging
+              - [ ] Navigate to /ai-influencer-discovery
+              - [ ] Verify candidate pool loads within 10s and shows ≥5 cards
+              - [ ] Click "Refine" → chat opens; type "younger audience";
+                    verify age bracket displayed on cards narrows visibly
+
+            Findings from Step 8 do NOT compete with correctness findings —
+            they go into a separate `## Test Coverage` output section (see
+            output template below). Do not squeeze them into the top-5.
+
+            Only AFTER Steps 1–8: synthesize the correctness findings (top 5)
+            and the Test Coverage section separately, then post the comment.
+            If you found more than 5 correctness issues, drop the lowest-
+            severity — but you should have FOUND more than 5 to choose from
+            on a large PR.
 
             Form a verdict: APPROVE / NEEDS-CHANGES / BLOCKER.
             Severity ladder (same as Step 7c, repeated for synthesis):
@@ -290,10 +413,36 @@ jobs:
             <APPROVE | NEEDS-CHANGES | BLOCKER> — one sentence why.
 
             ## Findings
-            For each finding (max 5, ordered by severity):
+            Correctness findings only. For each finding (max 5, ordered by
+            severity):
             - **[BLOCKER|MAJOR|MINOR] `path/to/file.ts:42`** — what's wrong, in one line.
               Then 1–3 sentences: why it matters + suggested fix. If you traced
               through the codebase to confirm, name the file(s) you checked.
+
+            ## Test Coverage
+            Output ONLY if Step 8 ran (i.e. the diff added or changed source
+            files). Skip this section entirely for docs / config / dependency-
+            only PRs and note "No source changes — Step 8 skipped." if the
+            reader might expect it. Otherwise structure as follows:
+
+            ### Missing tests
+            - **[BLOCKER|MAJOR|MINOR] `path/to/source.ts`** — what is untested +
+              which convention (INV-T##) applies + where the spec should live
+              per the repo's test convention. Concrete. Actionable in one PR.
+
+            ### Weak tests (existing, needs strengthening)
+            - **`test/foo.test.ts:42`** — what the assertion is missing (e.g.
+              "asserts status 200 but not response shape or list ordering").
+              Skip this subsection if all existing tests are strong.
+
+            ### AI-verifiable smoke test suggestion
+            A concrete smoke test template in the repo's actual test framework.
+            Copy-pasteable. Skip if not applicable to this PR's changes.
+
+            ### Manual QA checklist (author must confirm before merge)
+            - [ ] observable step 1
+            - [ ] observable step 2
+            - [ ] ... 4–8 items total, only for what the AI cannot verify.
 
             ## What looks good
             1–3 short bullets on the strongest parts of this PR (real signal, not
@@ -303,11 +452,15 @@ jobs:
             Then at the very END of the same comment, add a short Turkish summary
             (this section ONLY in Turkish, everything above stays English).
             Rules for this section:
-            - 2–4 cümle, toplam max 60 kelime.
+            - 3–5 cümle, toplam max 80 kelime.
             - Sade Türkçe, jargon yok (callback, race, idempotent gibi kelimeler
               kullanma; gerekirse "aynı anda iki istek gelirse" gibi açıkla).
-            - Sırayla: (a) PR ne yapıyor, (b) en kritik bulgu nedir, (c) merge
-              öncesi ne yapılmalı. APPROVE ise (c)'yi atla.
+            - Sırayla: (a) PR ne yapıyor, (b) en kritik correctness bulgusu,
+              (c) test durumu — kaç test dosyası eklendi, hangi kritik senaryo
+              test edilmemiş (varsa), (d) merge öncesi ne yapılmalı. APPROVE ise
+              (d)'yi atla.
+            - Test yoksa açıkça: "Bu PR'da yeni endpoint/sayfa için test
+              eklenmemiş — merge öncesi X test'i şart" gibi.
             - Kod yolu / değişken adları İngilizce kalsın (örn. `costGuard.ts`).
             - "Bu PR" diye başla. "Önerim:" ile bitir (eğer aksiyon varsa).
 
@@ -320,10 +473,10 @@ jobs:
               specific untested branch is the actual risk.
             - English output for Verdict/Findings/What looks good. Quote variable
               and function names verbatim from the code.
-            - You must complete all 7 process sections (including Step 5.5 if applicable
-              and Step 7 always) before synthesizing findings. Posting a sparse comment
-              early is a quality regression — partial coverage is worse than thorough
-              analysis, not better.
+            - You must complete all 8 process sections (Step 5.5 if applicable, Step 7
+              always, Step 8 if source files changed) before synthesizing findings.
+              Posting a sparse comment early is a quality regression — partial coverage
+              is worse than thorough analysis, not better.
             - Precision still matters more than volume: never invent or speculate a
               finding to fill a section. Each finding must cite file:line and survive
               the Step 7a bet-money test. If a section turns up nothing, that is fine;
