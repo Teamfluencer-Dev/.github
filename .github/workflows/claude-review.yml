@@ -5,7 +5,10 @@ on:
     inputs:
       model:
         description: Claude model id (override per-repo if needed)
-        default: claude-opus-4-8
+        # Sonnet 5 ($2/$10 per MTok) instead of Opus 4.8 ($5/$25): Sep 2026 review
+        # spend was 78% of the org Anthropic bill. Override per caller with
+        # `with: { model: claude-opus-4-8 }` if a repo needs the deeper model.
+        default: claude-sonnet-5
         type: string
       max_turns:
         description: Max agent turns (cost cap)
@@ -21,6 +24,10 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Two pushes in quick succession: cancel the stale review, keep only the latest.
+    concurrency:
+      group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     # Skip noisy / unsafe / opted-out cases
     if: >-
       github.event.pull_request.draft == false &&
@@ -130,6 +137,19 @@ jobs:
             echo 'HINTS_EOF'
           } >> "$GITHUB_OUTPUT"
 
+          # Docs-only diff → skip the Claude step (no LLM spend). Language-agnostic
+          # on purpose: a non-TS repo (e.g. Python) must never count as "docs only".
+          # Empty file list (diff failed) → review anyway.
+          DOCS_ONLY=false
+          if [ -n "$NAME_ONLY" ]; then
+            NON_DOC_FILES=$(printf '%s\n' "$NAME_ONLY" \
+              | grep -v '^$' \
+              | grep -vE '(\.md|\.mdx|\.rst)$|^docs/|(^|/)LICENSE' \
+              | wc -l | tr -d ' ')
+            [ "$NON_DOC_FILES" = "0" ] && DOCS_ONLY=true
+          fi
+          echo "docs_only=$DOCS_ONLY" >> "$GITHUB_OUTPUT"
+
       # v10 #3 — Load repo-specific conventions (named invariants INV-###).
       # Empty fallback if the file does not exist — does not break the workflow.
       - name: Load repo conventions
@@ -148,6 +168,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Claude senior-dev review
+        if: steps.hints.outputs.docs_only != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
