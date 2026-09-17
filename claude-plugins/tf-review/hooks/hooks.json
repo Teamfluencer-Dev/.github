@@ -1,0 +1,17 @@
+{
+  "description": "tf-review: keep the PR reviewer agents read-only (Bash allowlist, review.md-only writes)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|Agent|Task|Skill|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reviewer_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
