@@ -31,7 +31,8 @@ class BashAllowlistTest(unittest.TestCase):
             "grep -E 'a|b' src/app.ts",
             "cd /repo && git log -p -- src/a.ts 2>&1 | head -50",
             "find src -name '*.ts' -newer package.json",
-            "sed -n '10,40p' src/app.ts",
+            "git log --format='%h %s' | sort -k2 | uniq -c",
+            "sort -rn -k1,1 counts.txt",
             "cat src/app.ts; wc -l src/app.ts",
             "git branch -a",
         ):
@@ -56,8 +57,19 @@ class BashAllowlistTest(unittest.TestCase):
             "find . -exec rm {} ;",
             "rg --pre ./run.sh foo",
             "sort -o out.txt in.txt",
-            "sed -i 's/a/b/' src/app.ts",
-            "sed -n 'w out' src/app.ts",
+            "sort -uo /tmp/out src/app.ts",
+            "sort --compress-program=sh in.txt",
+            "uniq src/app.ts /tmp/out",
+            "sed -n -e 1p -e 'w /tmp/out' src/app.ts",
+            "sed -n '10,40p' src/app.ts",
+            "cat src/app.ts#; rm -rf src",
+            "git log#|sh",
+            "git grep -nOless foo",
+            "file -C -m magic",
+            "cat a&rm -rf src",
+            "cat a |& sh",
+            "cat <<< x",
+            "{ rm -rf src; }",
             "echo $(whoami)",
             "cat `ls`",
             "diff <(git show a:x) x",
@@ -66,6 +78,7 @@ class BashAllowlistTest(unittest.TestCase):
             "git log\nrm -rf src",
             "xargs rm < files.txt",
             "git log | sh",
+            "rg --hostname-bin=./x --hyperlink-format=default foo",
         ):
             with self.subTest(command=command):
                 self.assertIsNotNone(reviewer_guard.check_bash(command))
@@ -99,6 +112,22 @@ class HookProtocolTest(unittest.TestCase):
                                             "tool_input": {"command": "rm -rf /tmp/x"}}))
         self.assertIsNone(run_hook({"agent_type": "tf-review:full-reviewer", "tool_name": "Read",
                                     "tool_input": {"file_path": "/repo/src/app.ts"}}))
+
+    def test_reviewer_cannot_escape_through_other_tools(self):
+        for tool in ("WebFetch", "WebSearch", "Agent", "Task", "Skill", "mcp__computer-use__type"):
+            with self.subTest(tool=tool):
+                result = run_hook({"agent_type": "tf-review:incremental-reviewer", "tool_name": tool,
+                                   "tool_input": {}})
+                self.assertEqual(result["permissionDecision"], "deny")
+
+    def test_hook_matcher_covers_escape_tools(self):
+        import re
+        hooks = json.loads((GUARD.parent / "hooks.json").read_text())["hooks"]["PreToolUse"]
+        matcher = re.compile(f"^(?:{hooks[0]['matcher']})$")
+        for tool in ("Bash", "Write", "Edit", "WebFetch", "Agent", "Task", "Skill", "mcp__chrome-devtools__click"):
+            self.assertTrue(matcher.match(tool), tool)
+        for tool in ("Read", "Grep", "Glob"):
+            self.assertFalse(matcher.match(tool), tool)
 
 
 if __name__ == "__main__":

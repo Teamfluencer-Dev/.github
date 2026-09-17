@@ -8,6 +8,7 @@ reviews), so their tool use is enforced here instead of trusted to the prompt:
   search and file viewers). Allowed commands are auto-approved, so the review
   runs without permission prompts; everything else is denied.
 - Write / Edit: only `.tf-review/pr-<n>/review.md`.
+- Anything else routed here (web, MCP, nested agents, skills): denied.
 
 Tool calls outside these agents are left alone (no output, exit 0).
 """
@@ -21,23 +22,22 @@ REVIEW_FILE_RE = re.compile(r"(^|/)\.tf-review/pr-\d+/review\.md$")
 SEPARATORS = {";", "&&", "||", "|"}
 SAFE_COMMANDS = {
     "rg", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "ls", "find", "sort", "uniq", "cut", "tr",
-    "nl", "file", "stat", "pwd", "echo", "printf", "basename", "dirname", "realpath", "jq", "diff", "column",
-    "true", "cd", "sed", "tree",
+    "nl", "stat", "pwd", "echo", "printf", "basename", "dirname", "realpath", "jq", "diff", "column", "true", "cd",
 }
 GIT_READ_ONLY = {
     "log", "show", "blame", "diff", "grep", "ls-files", "ls-tree", "rev-parse", "cat-file", "merge-base",
     "shortlog", "status", "describe", "name-rev", "rev-list", "branch", "tag",
 }
-# Options that make an otherwise read-only command write files or run programs.
-DENIED_OPTIONS = {
-    "git": ("--output", "--ext-diff", "-O", "--open-files-in-pager", "--textconv", "--delete", "--move",
+# Options that make an otherwise read-only command write files or run programs:
+# long options (exact or `--opt=value`) and short option letters, also inside bundles like `-uo`.
+DENIED_LONG = {
+    "git": ("--output", "--ext-diff", "--open-files-in-pager", "--textconv", "--delete", "--move",
             "--set-upstream-to", "--unset-upstream", "--edit-description"),
     "find": ("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"),
-    "rg": ("--pre", "--pre-glob"),
-    "sort": ("-o", "--output"),
-    "tree": ("-o",),
+    "rg": ("--pre", "--pre-glob", "--hostname-bin"),
+    "sort": ("--output", "--compress-program"),
 }
-SED_PRINT_RE = re.compile(r"^(\d+|\$)(,(\d+|\$))?p$")
+DENIED_SHORT = {"git": "O", "sort": "o"}
 
 
 def decision(kind, reason):
@@ -53,11 +53,14 @@ def check_command(argv):
     if name not in SAFE_COMMANDS and name != "git":
         return f"`{name}` is not an allowed read-only command"
     args = argv[1:]
-    denied = DENIED_OPTIONS.get(name, ())
     for arg in args:
-        if any(arg == opt or arg.startswith(opt + "=") or (opt.startswith("-") and len(opt) == 2
-               and arg.startswith(opt) and not arg.startswith("--")) for opt in denied):
+        if any(arg == opt or arg.startswith(opt + "=") for opt in DENIED_LONG.get(name, ())):
             return f"`{name} {arg}` can write files or run programs"
+        if (arg.startswith("-") and not arg.startswith("--") and name != "find"
+                and set(arg[1:]) & set(DENIED_SHORT.get(name, ""))):
+            return f"`{name} {arg}` can write files or run programs"
+    if name == "uniq" and any(not a.startswith("-") for a in args):
+        return "`uniq` may only read stdin (its second argument is an output file)"
     if name == "git":
         rest = list(args)
         while rest and rest[0].startswith("-"):
@@ -70,12 +73,6 @@ def check_command(argv):
             return f"`git {rest[0] if rest else ''}` is not a read-only git command"
         if rest[0] in ("branch", "tag") and len(rest) > 1 and not all(a.startswith("-") for a in rest[1:]):
             return "git branch/tag may only list"
-    if name == "sed":
-        if "-n" not in args or any(a.startswith("-i") or a.startswith("--in-place") for a in args):
-            return "only `sed -n '<from>,<to>p' <file>` is allowed; use Read instead"
-        scripts = [a for a in args if not a.startswith("-")]
-        if not scripts or not SED_PRINT_RE.match(scripts[0]):
-            return "only `sed -n '<from>,<to>p' <file>` is allowed; use Read instead"
     return None
 
 
@@ -86,6 +83,7 @@ def check_bash(command):
         return "command substitution is not allowed"
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.commenters = ""  # bash only starts a comment at a word boundary; never let shlex drop the rest
     try:
         tokens = list(lexer)
     except ValueError:
@@ -132,6 +130,8 @@ def main():
     if data.get("agent_type") not in REVIEWER_AGENTS:
         return 0
     tool, tool_input = data.get("tool_name"), data.get("tool_input") or {}
+    if tool in ("Read", "Grep", "Glob"):
+        return 0
     if tool == "Bash":
         reason = check_bash(tool_input.get("command") or "")
         result = (decision("allow", "tf-review: read-only command") if reason is None else
@@ -142,7 +142,8 @@ def main():
         result = (decision("allow", "tf-review: review.md") if REVIEW_FILE_RE.search(path) else
                   decision("deny", "tf-review reviewers may only write review.md in their job directory."))
     else:
-        return 0
+        # Web access, MCP tools, nested agents and skills would escape the confinement above.
+        result = decision("deny", f"tf-review reviewers cannot use {tool}.")
     print(json.dumps(result))
     return 0
 
