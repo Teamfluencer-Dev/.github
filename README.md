@@ -105,11 +105,11 @@ An org admin can temporarily set the ruleset to *Disabled* in the repository's
 Settings → Rules → Rulesets (for example if a hotfix cannot wait for a review).
 Re-enable it right after.
 
-## Reusable workflows
+## No GitHub-side PR review
 
-### `claude-review.yml` — disabled
-
-The former API-billed CI review. It is now a stub whose only job is always
-skipped, so existing `pr-review.yml` callers keep working without spending
-runner minutes or API credits. The v11 review instructions moved into the
+The API-billed CI review is gone: the reusable `claude-review.yml` workflow was
+deleted, the caller workflows were removed from the repositories, their API key
+secrets were deleted and the review API keys were deactivated. Nothing on GitHub
+calls a model any more — PR review happens only in a developer's Claude Code
+session, through the plugin above. The v11 review instructions live in the
 plugin's agents.
