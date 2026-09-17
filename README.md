@@ -61,6 +61,22 @@ incremental or carry-forward, so they are quick.
 The verdict (APPROVE / NEEDS-CHANGES / BLOCKER) is informational: the check
 requires that a review happened, not that it approved.
 
+### Safeguards and limits
+
+- The reviewer agents read text written by others, so a plugin `PreToolUse` hook
+  (`hooks/reviewer_guard.py`) confines them: Bash only for single-line read-only
+  commands (git history, `rg`/`grep`, file viewers — auto-approved, so reviews
+  run without permission prompts), and writes only to their own `review.md`.
+- PR descriptions and earlier reviews are wrapped in per-job random delimiters.
+- Pull requests from forks are refused.
+- Markdown that instructs Claude or the reviewer (`CLAUDE.md`, `AGENTS.md`,
+  `SKILL.md`, `.claude/`, `claude-plugins/`, `.github/claude-review-context.md`)
+  is reviewed like code, never skipped as documentation.
+- Review state is read only from unedited marker comments written by org
+  members or collaborators.
+- The gate is a team process control, not a security boundary: anyone with push
+  access can technically create a `claude-review` status through the API.
+
 Repo-specific review invariants live in each repository's
 `.github/claude-review-context.md` (INV-### / INV-T##) and are handed to the agent.
 

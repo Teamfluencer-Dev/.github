@@ -1,6 +1,6 @@
 {
   "name": "tf-review",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Mandatory Teamfluencer PR review: a fresh-context Opus agent reviews the PR on the Claude subscription (no API credits) and sets the required claude-review check.",
   "author": {
     "name": "Teamfluencer"
