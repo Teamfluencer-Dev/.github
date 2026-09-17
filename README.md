@@ -1,45 +1,96 @@
 # Teamfluencer-Dev / .github
 
-Org defaults: shared reusable workflows for Teamfluencer-Dev repos.
+Org defaults for Teamfluencer-Dev repositories.
+
+## Mandatory Claude PR review (`tf-review` plugin)
+
+Every repository's default branch has a ruleset named **Claude review zorunlu**:
+
+- changes land only through pull requests (no direct pushes), and
+- the PR head commit must carry a successful **`claude-review`** commit status.
+
+That status is set by the `tf-review` Claude Code plugin. The review runs in the
+developer's own Claude Code session, on their Claude subscription — never on
+Anthropic API credits — by a fresh-context Opus agent.
+
+### One-time setup (each developer)
+
+```bash
+claude plugin marketplace add Teamfluencer-Dev/.github
+claude plugin install tf-review@teamfluencer
+```
+
+Also required: the GitHub CLI logged in (`gh auth login`), Claude Code logged in
+with a Claude subscription (`/login`), and no `ANTHROPIC_API_KEY` in the
+environment Claude Code starts from (the plugin refuses to run otherwise).
+
+### Usage
+
+Open Claude Code in the repository and run:
+
+```
+/pr-review            # the PR of the current branch
+/pr-review 123        # a PR number or URL
+/pr-review 123 --full # force a full review
+```
+
+What happens:
+
+1. `scripts/tf_review.py prepare` resolves the PR and picks a mode:
+   - **full** — first review of the PR (or `--full`, or more than 1,500 changed
+     lines since the last review, or the last reviewed commit was force-pushed
+     away);
+   - **incremental** — code changed since the last review; only the delta is
+     reviewed and earlier findings are tracked;
+   - **carry** — nothing in the PR's files changed since the last review (e.g. a
+     base-branch merge) or only docs changed: the status is re-issued without an
+     agent run;
+   - **docs-only** — the PR only touches `*.md`, `*.mdx`, `*.rst`, `docs/` or
+     `LICENSE`.
+2. For full / incremental reviews, the skill launches `full-reviewer` or
+   `incremental-reviewer` (Opus, zero context). The agent reads the job directory
+   (`.tf-review/pr-<n>/` in the repo, git-excluded) and the code at the PR head,
+   and writes `review.md`.
+3. `scripts/tf_review.py post` posts the review as a PR comment, sets
+   `claude-review` = success on the reviewed commit, collapses older review
+   comments and removes the job directory.
+
+Every new push needs `/pr-review` again before merging; later runs are
+incremental or carry-forward, so they are quick.
+
+The verdict (APPROVE / NEEDS-CHANGES / BLOCKER) is informational: the check
+requires that a review happened, not that it approved.
+
+Repo-specific review invariants live in each repository's
+`.github/claude-review-context.md` (INV-### / INV-T##) and are handed to the agent.
+
+### Updating the plugin
+
+```bash
+claude plugin marketplace update teamfluencer
+claude plugin update tf-review@teamfluencer
+```
+
+`/pr-review` prints a reminder when a newer version is published. Bump
+`claude-plugins/tf-review/.claude-plugin/plugin.json` `version` with every change.
+
+### Tests
+
+```bash
+python3 -m unittest discover -s claude-plugins/tf-review/tests -v
+```
+
+### Emergency
+
+An org admin can temporarily set the ruleset to *Disabled* in the repository's
+Settings → Rules → Rulesets (for example if a hotfix cannot wait for a review).
+Re-enable it right after.
 
 ## Reusable workflows
 
-### `claude-review.yml` — Senior-dev PR review by Claude
+### `claude-review.yml` — disabled
 
-Auto-reviews every PR opened/updated in caller repos, posts a single
-structured comment (verdict + findings + what looks good).
-
-**Caller usage:**
-
-```yaml
-# .github/workflows/pr-review.yml in a caller repo
-name: PR Review
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-
-jobs:
-  claude:
-    uses: Teamfluencer-Dev/.github/.github/workflows/claude-review.yml@main
-    secrets: inherit
-```
-
-**Override model per-repo (e.g., use Sonnet for a cheaper repo):**
-
-```yaml
-jobs:
-  claude:
-    uses: Teamfluencer-Dev/.github/.github/workflows/claude-review.yml@main
-    with:
-      model: claude-sonnet-4-6
-    secrets: inherit
-```
-
-**Skip a single PR:** add the `skip-review` label.
-
-## Prerequisites
-
-- The [`claude` GitHub App](https://github.com/apps/claude) must be
-  installed on each caller repo.
-- Org-level secret `ANTHROPIC_API_KEY` must exist and be scoped to caller
-  repos.
+The former API-billed CI review. It is now a stub whose only job is always
+skipped, so existing `pr-review.yml` callers keep working without spending
+runner minutes or API credits. The v11 review instructions moved into the
+plugin's agents.

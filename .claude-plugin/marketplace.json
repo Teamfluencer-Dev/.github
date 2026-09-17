@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "teamfluencer",
+  "description": "Claude Code plugins for Teamfluencer-Dev repositories",
+  "owner": {
+    "name": "Teamfluencer"
+  },
+  "plugins": [
+    {
+      "name": "tf-review",
+      "description": "Mandatory PR review on the Claude subscription: fresh-context Opus agent + required claude-review check",
+      "source": "./claude-plugins/tf-review",
+      "category": "productivity"
+    }
+  ]
+}
