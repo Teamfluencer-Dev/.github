@@ -381,10 +381,14 @@ def code_tree(root, head, job):
     """Reuse the working copy when it is exactly the PR head; otherwise a detached worktree."""
     at_head = git(root, "rev-parse", "HEAD", check=False).stdout.strip() == head
     dirty = git(root, "status", "--porcelain").stdout.strip()
-    if at_head and not dirty:
+    # A sparse checkout holds only part of the repo, so the reviewer would read a tree with files missing.
+    sparse = git(root, "config", "--get", "core.sparseCheckout", check=False).stdout.strip() == "true"
+    if at_head and not dirty and not sparse:
         return root, False
     tree = job / "tree"
     git(root, "worktree", "add", "--detach", "--force", str(tree), head)
+    if sparse:  # a worktree of a sparse clone starts sparse too
+        git(root, "-C", str(tree), "sparse-checkout", "disable", check=False)
     return tree, True
 
 

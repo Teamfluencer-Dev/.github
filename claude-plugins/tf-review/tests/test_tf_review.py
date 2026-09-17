@@ -358,6 +358,18 @@ class TfReviewTest(unittest.TestCase):
         self.assertTrue(meta["worktree_created"])
         self.assertNotEqual(meta["tree"], str(self.reviewer))
 
+    def test_sparse_checkout_gets_a_full_worktree(self):
+        self.write("src/app.ts", "export const a = 2;\n")
+        self.commit("change")
+        head = self.push_pr()
+        git(self.reviewer, "fetch", "-q", "origin", "feature")
+        git(self.reviewer, "checkout", "-q", "--detach", head)
+        git(self.reviewer, "sparse-checkout", "set", "--no-cone", "/README.md")
+        self.assertFalse((self.reviewer / "src" / "app.ts").exists())
+        meta = json.loads(Path(self.prepare()["job_dir"], "meta.json").read_text())
+        self.assertTrue(meta["worktree_created"])
+        self.assertEqual((Path(meta["tree"]) / "src" / "app.ts").read_text(), "export const a = 2;\n")
+
     def test_empty_pr_sets_status_without_comment(self):
         head = self.push_pr()  # feature == main: nothing to review
         result, posted = self.review_and_post()
