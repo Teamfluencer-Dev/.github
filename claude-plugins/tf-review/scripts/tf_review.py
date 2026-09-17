@@ -393,11 +393,11 @@ def code_tree(root, head, job):
     # A worktree of a sparse clone starts sparse too, and a failure here would hand the
     # reviewer exactly the partial tree this avoids — so it must be loud.
     git(tree, "sparse-checkout", "disable")
-    missing = len(git(root, "ls-tree", "-r", "--name-only", head).stdout.splitlines()) - \
-        len(git(tree, "ls-files").stdout.splitlines())
-    if missing > 0:
-        raise Stop(f"Seyrek (sparse) klonda review için tam ağaç çıkarılamadı ({missing} dosya eksik). "
-                   "Repoda `git sparse-checkout disable` yapıp /pr-review'u tekrar çalıştırın.")
+    # `ls-files` also lists entries that were never written to disk; the `S` tag is the sparse one.
+    missing = [line[2:] for line in git(tree, "ls-files", "-t").stdout.splitlines() if line.startswith("S ")]
+    if missing:
+        raise Stop(f"Seyrek (sparse) klonda review için tam ağaç çıkarılamadı ({len(missing)} dosya eksik, "
+                   f"ör. {missing[0]}). Repoda `git sparse-checkout disable` yapıp /pr-review'u tekrar çalıştırın.")
     return tree, True, "Repo seyrek (sparse) klonlanmış; review kodun tamamını ayrı bir worktree'de görüyor."
 
 

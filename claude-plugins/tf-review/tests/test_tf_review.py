@@ -381,6 +381,9 @@ class TfReviewTest(unittest.TestCase):
         self.assertEqual(sorted(git(tree, "ls-files").splitlines()),
                          sorted(git(self.reviewer, "ls-tree", "-r", "--name-only", head).splitlines()))
         self.assertEqual((tree / "src" / "app.ts").read_text(), "export const a = 2;\n")
+        # ...on disk, including paths outside the sparse patterns.
+        self.assertTrue((tree / "README.md").exists())
+        self.assertEqual([], [l for l in git(tree, "ls-files", "-t").splitlines() if l.startswith("S ")])
         # ...while the developer's own clone stays sparse.
         self.assertEqual(git(self.reviewer, "config", "--type=bool", "--get", "core.sparseCheckout"), "true")
 
