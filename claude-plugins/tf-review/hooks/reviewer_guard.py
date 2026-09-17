@@ -4,15 +4,18 @@
 The reviewers read text written by other people (PR description, diff, earlier
 reviews), so their tool use is enforced here instead of trusted to the prompt:
 
-- Bash: only single-line, read-only commands from an allowlist (git history,
-  search and file viewers). Allowed commands are auto-approved, so the review
-  runs without permission prompts; everything else is denied.
+- Bash: anything outside a read-only allowlist (git history, search, file
+  viewers) is denied, and so is any shell expansion the allowlist cannot see
+  through. The guard only ever denies: a command it considers read-only still
+  goes through the session's normal permission flow, so a parser mistake cannot
+  turn into a silent run.
 - Write / Edit: only `.tf-review/pr-<n>/review.md`.
 - Anything else routed here (web, MCP, nested agents, skills): denied.
 
 Tool calls outside these agents are left alone (no output, exit 0).
 """
 import json
+import os
 import re
 import shlex
 import sys
@@ -54,7 +57,10 @@ def check_command(argv):
         return f"`{name}` is not an allowed read-only command"
     args = argv[1:]
     for arg in args:
-        if any(arg == opt or arg.startswith(opt + "=") for opt in DENIED_LONG.get(name, ())):
+        # getopt_long and git's parser accept unambiguous prefixes, so `--outp=` must be denied too.
+        stem = arg.split("=", 1)[0]
+        if any(arg == opt or arg.startswith(opt + "=") or (len(stem) > 2 and opt.startswith(stem))
+               for opt in DENIED_LONG.get(name, ())):
             return f"`{name} {arg}` can write files or run programs"
         if (arg.startswith("-") and not arg.startswith("--") and name != "find"
                 and set(arg[1:]) & set(DENIED_SHORT.get(name, ""))):
@@ -76,11 +82,40 @@ def check_command(argv):
     return None
 
 
+def unquoted_expansion(command):
+    """Shell expansions the allowlist cannot see through (`{-exec,sh}`, `${X:--delete}`, `rg foo *`)."""
+    quote, i = None, 0
+    while i < len(command):
+        char = command[i]
+        if quote == "'":
+            quote = None if char == "'" else quote
+        elif quote == '"':
+            if char == "\\":
+                i += 1
+            elif char == '"':
+                quote = None
+            elif char in "$`":
+                return "`$` and backticks are not allowed; they hide what the command really runs"
+        elif char == "\\":
+            i += 1
+        elif char in "'\"":
+            quote = char
+        elif char in "$`":
+            return "`$` and backticks are not allowed; they hide what the command really runs"
+        elif char in "{}":
+            return "brace expansion is not allowed; quote the argument"
+        elif char in "*?[":
+            return "quote glob patterns (e.g. -name '*.ts'); unquoted globs can expand into options"
+        i += 1
+    return None
+
+
 def check_bash(command):
     if "\n" in command or "\r" in command:
         return "multi-line commands are not allowed; run one command per call"
-    if "`" in command or "$(" in command or "<(" in command or ">(" in command:
-        return "command substitution is not allowed"
+    reason = unquoted_expansion(command)
+    if reason:
+        return reason
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = ""  # bash only starts a comment at a word boundary; never let shlex drop the rest
@@ -134,11 +169,12 @@ def main():
         return 0
     if tool == "Bash":
         reason = check_bash(tool_input.get("command") or "")
-        result = (decision("allow", "tf-review: read-only command") if reason is None else
-                  decision("deny", f"tf-review reviewers are read-only: {reason}. "
-                                   "Use Read, or a plain git log/show/blame/diff, rg or grep command."))
+        if reason is None:
+            return 0  # looks read-only: let the session's own permission flow decide, never auto-approve
+        result = decision("deny", f"tf-review reviewers are read-only: {reason}. "
+                                  "Use Read, or a plain git log/show/blame/diff, rg or grep command.")
     elif tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
-        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        path = os.path.normpath(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         result = (decision("allow", "tf-review: review.md") if REVIEW_FILE_RE.search(path) else
                   decision("deny", "tf-review reviewers may only write review.md in their job directory."))
     else:

@@ -24,8 +24,10 @@ named in your prompt.
   otherwise with single-line read-only Bash (`rg`, `grep`, `git grep`, `ls`) run
   in the code checkout; use `git log`, `git show`, `git blame`, `git diff` for
   history. Never install, build, run tests or scripts, touch the network, or
-  change files. A guard hook enforces this and denies anything else — if a
-  command is denied, switch to Read or a plainer command instead of retrying.
+  change files. A guard hook enforces this and denies anything else, including
+  shell expansion: keep commands on one line, quote glob patterns (`-name
+  '*.ts'`), and use no `$`, backticks or braces. If a command is denied, switch
+  to Read or a plainer command instead of retrying.
 - **One output file.** The only file you may write is `review.md` in the job
   directory. Do not post anything to GitHub — the skill does that.
 - **Where the code is.** `context.md` gives the path of the checkout at the PR

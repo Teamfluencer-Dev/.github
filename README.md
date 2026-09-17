@@ -64,9 +64,12 @@ requires that a review happened, not that it approved.
 ### Safeguards and limits
 
 - The reviewer agents read text written by others, so a plugin `PreToolUse` hook
-  (`hooks/reviewer_guard.py`) confines them: Bash only for single-line read-only
-  commands (git history, `rg`/`grep`, file viewers — auto-approved, so reviews
-  run without permission prompts), and writes only to their own `review.md`.
+  (`hooks/reviewer_guard.py`) confines them: Bash is denied unless it is a
+  single-line read-only command (git history, `rg`/`grep`, file viewers) with no
+  shell expansion, writes are denied outside their own `review.md`, and web, MCP,
+  nested-agent and skill tools are denied. The hook only ever denies — a command
+  it considers read-only still goes through the session's normal permission
+  flow, so a parser mistake cannot become a silent run.
 - PR descriptions and earlier reviews are wrapped in per-job random delimiters.
 - Pull requests from forks are refused.
 - Markdown that instructs Claude or the reviewer (`CLAUDE.md`, `AGENTS.md`,
