@@ -378,18 +378,27 @@ def remove_job_dir(root, job):
 
 
 def code_tree(root, head, job):
-    """Reuse the working copy when it is exactly the PR head; otherwise a detached worktree."""
+    """The reviewer's tree at the PR head: the working copy when it already is that commit,
+    clean and complete, otherwise a detached worktree. Returns (path, created, note)."""
     at_head = git(root, "rev-parse", "HEAD", check=False).stdout.strip() == head
     dirty = git(root, "status", "--porcelain").stdout.strip()
     # A sparse checkout holds only part of the repo, so the reviewer would read a tree with files missing.
-    sparse = git(root, "config", "--get", "core.sparseCheckout", check=False).stdout.strip() == "true"
+    sparse = git(root, "config", "--type=bool", "--get", "core.sparseCheckout", check=False).stdout.strip() == "true"
     if at_head and not dirty and not sparse:
-        return root, False
+        return root, False, None
     tree = job / "tree"
     git(root, "worktree", "add", "--detach", "--force", str(tree), head)
-    if sparse:  # a worktree of a sparse clone starts sparse too
-        git(root, "-C", str(tree), "sparse-checkout", "disable", check=False)
-    return tree, True
+    if not sparse:
+        return tree, True, None
+    # A worktree of a sparse clone starts sparse too, and a failure here would hand the
+    # reviewer exactly the partial tree this avoids — so it must be loud.
+    git(tree, "sparse-checkout", "disable")
+    missing = len(git(root, "ls-tree", "-r", "--name-only", head).stdout.splitlines()) - \
+        len(git(tree, "ls-files").stdout.splitlines())
+    if missing > 0:
+        raise Stop(f"Seyrek (sparse) klonda review için tam ağaç çıkarılamadı ({missing} dosya eksik). "
+                   "Repoda `git sparse-checkout disable` yapıp /pr-review'u tekrar çalıştırın.")
+    return tree, True, "Repo seyrek (sparse) klonlanmış; review kodun tamamını ayrı bir worktree'de görüyor."
 
 
 def read_conventions(tree):
@@ -505,7 +514,9 @@ def prepare(argv, root=None, slug=None, environ=None):
     ensure_excluded(root)
     tree, created = (root, False)
     if decision["mode"] in REVIEW_MODES:
-        tree, created = code_tree(root, head, job)
+        tree, created, note = code_tree(root, head, job)
+        if note:
+            notes.append(note)
         write_job(root, job, tree, pr, slug, head, decision, last)
 
     meta = {

@@ -358,17 +358,50 @@ class TfReviewTest(unittest.TestCase):
         self.assertTrue(meta["worktree_created"])
         self.assertNotEqual(meta["tree"], str(self.reviewer))
 
-    def test_sparse_checkout_gets_a_full_worktree(self):
+    def sparse_reviewer_at_head(self, *sparse_args):
         self.write("src/app.ts", "export const a = 2;\n")
         self.commit("change")
         head = self.push_pr()
         git(self.reviewer, "fetch", "-q", "origin", "feature")
         git(self.reviewer, "checkout", "-q", "--detach", head)
-        git(self.reviewer, "sparse-checkout", "set", "--no-cone", "/README.md")
-        self.assertFalse((self.reviewer / "src" / "app.ts").exists())
+        if sparse_args:
+            git(self.reviewer, "sparse-checkout", "set", *sparse_args)
+        return head
+
+    def assert_sparse_review_sees_everything(self, *sparse_args):
+        head = self.sparse_reviewer_at_head(*sparse_args)
+        result = self.prepare()
+        job = Path(result["job_dir"])
+        meta = json.loads((job / "meta.json").read_text())
+        tree = Path(meta["tree"])
+        self.assertTrue(meta["worktree_created"])
+        self.assertIn(str(tree), (job / "context.md").read_text())
+        self.assertIn("seyrek", " ".join(result["notes"]))
+        # The reviewer sees every file at head...
+        self.assertEqual(sorted(git(tree, "ls-files").splitlines()),
+                         sorted(git(self.reviewer, "ls-tree", "-r", "--name-only", head).splitlines()))
+        self.assertEqual((tree / "src" / "app.ts").read_text(), "export const a = 2;\n")
+        # ...while the developer's own clone stays sparse.
+        self.assertEqual(git(self.reviewer, "config", "--type=bool", "--get", "core.sparseCheckout"), "true")
+
+    def test_cone_sparse_checkout_gets_a_full_worktree(self):
+        self.assert_sparse_review_sees_everything("--cone", "src")
+
+    def test_no_cone_sparse_checkout_gets_a_full_worktree(self):
+        self.assert_sparse_review_sees_everything("--no-cone", "/README.md")
+
+    def test_sparse_review_cleans_up_its_worktree(self):
+        self.sparse_reviewer_at_head("--cone", "src")
+        result, _ = self.review_and_post()
+        self.assertFalse(Path(result["job_dir"]).exists())
+        self.assertNotIn("tf-review", git(self.reviewer, "worktree", "list"))
+        self.assertEqual(git(self.reviewer, "config", "--type=bool", "--get", "core.sparseCheckout"), "true")
+
+    def test_non_canonical_sparse_boolean_is_detected(self):
+        self.sparse_reviewer_at_head("--cone", "src")
+        git(self.reviewer, "config", "core.sparseCheckout", "1")
         meta = json.loads(Path(self.prepare()["job_dir"], "meta.json").read_text())
         self.assertTrue(meta["worktree_created"])
-        self.assertEqual((Path(meta["tree"]) / "src" / "app.ts").read_text(), "export const a = 2;\n")
 
     def test_empty_pr_sets_status_without_comment(self):
         head = self.push_pr()  # feature == main: nothing to review
