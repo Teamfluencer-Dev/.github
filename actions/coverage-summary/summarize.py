@@ -69,7 +69,7 @@ def render(files, title):
         f"| Dal (branch) | {total['brh']} | {total['brf']} | {pct(total['brh'], total['brf'])} |",
         f"| Fonksiyon | {total['fnh']} | {total['fnf']} | {pct(total['fnh'], total['fnf'])} |",
         "",
-        f"{len(files)} dosya ölçüldü. Bu tablo yalnız görünürlük içindir; eşik yok.",
+        f"{len(files)} dosya ölçüldü. Bu tablo görünürlük içindir; varsa repo kendi eşiğini ayrıca uygular.",
     ]
     weak = sorted(((d, v) for d, v in by_dir.items() if v["lf"] >= MIN_DIR_LINES),
                   key=lambda item: item[1]["lh"] / item[1]["lf"])[:WEAKEST_DIRS]
