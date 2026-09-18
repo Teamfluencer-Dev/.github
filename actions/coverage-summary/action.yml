@@ -12,7 +12,10 @@ inputs:
     required: false
     default: Coverage
   artifact-name:
-    description: Artifact name for the uploaded report ('' to skip the upload).
+    description: >-
+      Artifact name for the uploaded report ('' to skip the upload). Must be
+      unique per workflow run — callers in a matrix or calling this action more
+      than once must pass a distinct name.
     required: false
     default: coverage-lcov
 
@@ -20,6 +23,7 @@ runs:
   using: composite
   steps:
     - name: Coverage summary
+      continue-on-error: true  # visibility only: never fail the caller's job
       shell: bash
       env:
         LCOV: ${{ inputs.lcov }}
@@ -28,9 +32,11 @@ runs:
 
     - name: Upload coverage report
       if: inputs.artifact-name != '' && hashFiles(inputs.lcov) != ''
+      continue-on-error: true  # e.g. a duplicate artifact name must not fail the caller's job
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.lcov }}
         retention-days: 14
         if-no-files-found: ignore
+        overwrite: true

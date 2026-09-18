@@ -58,6 +58,12 @@ class SummarizeTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("hiç dosya yok", result.stdout)
 
+    def test_relative_keeps_outside_paths(self):
+        self.assertEqual(summarize.relative("./src/a.ts", "/work/repo"), "src/a.ts")
+        self.assertEqual(summarize.relative("../shared/x.ts", "/work/repo"), "../shared/x.ts")
+        self.assertEqual(summarize.relative("/app/src/x.ts", "/work/repo"), "/app/src/x.ts")
+        self.assertEqual(summarize.relative("/work/repo/src/x.ts", "/work/repo"), "src/x.ts")
+
     def test_zero_found_shows_dash(self):
         self.assertEqual(summarize.pct(0, 0), "—")
 

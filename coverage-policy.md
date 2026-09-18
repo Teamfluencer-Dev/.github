@@ -20,7 +20,8 @@ weeks of numbers set the real baseline before any gate is switched on.
 
 The action writes a totals table and the ten weakest directories to the job
 summary and uploads the report as the `coverage-lcov` artifact (14 days). It
-never fails the job.
+never fails the job. Callers in a matrix, or calling it more than once in a
+run, pass a unique `artifact-name`.
 
 ## What counts
 

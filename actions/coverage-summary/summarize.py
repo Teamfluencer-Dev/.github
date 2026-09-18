@@ -32,10 +32,13 @@ def parse(text):
 
 
 def relative(path, workspace):
+    """Workspace-relative path; paths outside the workspace are kept as they are."""
+    if not os.path.isabs(path):
+        return path[2:] if path.startswith("./") else path
     try:
         return str(Path(path).resolve().relative_to(Path(workspace).resolve()))
     except (ValueError, OSError):
-        return path.lstrip("./")
+        return path
 
 
 def pct(hit, found):
