@@ -1,0 +1,36 @@
+name: Coverage summary
+description: >-
+  Write an lcov.info coverage report to the job summary and upload it as an
+  artifact. Visibility only — it never fails the job.
+
+inputs:
+  lcov:
+    description: Path to the lcov.info file, relative to the workspace.
+    required: true
+  title:
+    description: Heading for the summary section.
+    required: false
+    default: Coverage
+  artifact-name:
+    description: Artifact name for the uploaded report ('' to skip the upload).
+    required: false
+    default: coverage-lcov
+
+runs:
+  using: composite
+  steps:
+    - name: Coverage summary
+      shell: bash
+      env:
+        LCOV: ${{ inputs.lcov }}
+        TITLE: ${{ inputs.title }}
+      run: python3 "$GITHUB_ACTION_PATH/summarize.py" "$LCOV" "$TITLE" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload coverage report
+      if: inputs.artifact-name != '' && hashFiles(inputs.lcov) != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.lcov }}
+        retention-days: 14
+        if-no-files-found: ignore
