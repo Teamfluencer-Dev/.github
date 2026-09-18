@@ -105,6 +105,22 @@ An org admin can temporarily set the ruleset to *Disabled* in the repository's
 Settings → Rules → Rulesets (for example if a hotfix cannot wait for a review).
 Re-enable it right after.
 
+## Test coverage
+
+`coverage-policy.md` defines what counts, the current phase (visibility, no
+gates) and the planned gates. Repositories publish their `lcov.info` with the
+shared action `actions/coverage-summary`:
+
+```yaml
+- uses: Teamfluencer-Dev/.github/actions/coverage-summary@main
+  if: always()
+  with:
+    lcov: coverage/lcov.info
+    title: Coverage — <repo>
+```
+
+Tests: `python3 -m unittest discover -s actions/coverage-summary`.
+
 ## No GitHub-side PR review
 
 The API-billed CI review is gone: the reusable `claude-review.yml` workflow was

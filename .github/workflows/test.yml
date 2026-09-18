@@ -1,0 +1,28 @@
+name: Tests
+
+# Callers pin `actions/coverage-summary@main` and the tf-review plugin ships
+# from `main`, so every change here is checked before it merges.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Coverage summary action
+        run: python3 -m unittest discover -s actions/coverage-summary -v
+      - name: tf-review plugin
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          python3 -m unittest discover -s claude-plugins/tf-review/tests -v
