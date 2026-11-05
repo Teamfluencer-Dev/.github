@@ -133,13 +133,14 @@ söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Ekl
 /paylas ekteki PDF yönetim için; Cuma'ya kadar fiyat kararı lazım ./abonelik.pdf
 /paylas geldiğim nokta: ödeme ekranı bitti, test bekliyor
 /paylas api#1976 web#689 merge sırası devri
-/paylas Abdullah ve Oğuz'dan Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
+/paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
 /bilgi konu K-0003
 /bilgi ara abonelik
 /bilgi alindi B-20261105-ayse-01 Cuma'ya bakıyorum
+/bilgi alindi B-20261105-ayse-01 --kisi mert   # yazanlar: yetkisi olmayanın alındısını onun adına
 /bilgi tercih                # bildirim kanalın ve çözülüp çözülmediği
 /bilgi tercih slack,mail     # tercihini "Bildirim tercihleri" issue'suna yazar
 ```
@@ -154,9 +155,12 @@ kuyruklar kütüphanecinindir, eklenti onlara dokunmaz. Yönetim deposuna yalnı
 belirlemez. `pr-listesi` türünde tablo `gh` ile (yalnız okuma) PR'ların
 `claude-review` ve merge durumundan kurulur.
 
-İstek bir ya da birden çok kişiye yöneltilir (`kimden: abdullah` ya da
-`kimden: [abdullah, oguz]`); alındı kişi başınadır. "Hemen haber ver" denirse girdiye
-`haber: hemen` yazılır ve push'ta her alıcıya anlık mesaj gider (hafta içi 08:30–19:00,
+İstek bir ya da birden çok kişiye yöneltilir (`kimden: ayse` ya da
+`kimden: [ayse, mert]`); alındı kişi başınadır. Depoya yazma yetkisi olmayan alıcı
+“alındı <girdi-id>”yi `yazanlar` listesindekilerden birine yazar; o
+`/bilgi alindi <girdi-id> --kisi <alıcı>` ile onun adına kaydeder (onay dosyasında
+`kaydeden`; KB `dogrula` kaydedenin `yazanlar`'da olduğunu denetler). "Hemen haber ver"
+denirse girdiye `haber: hemen` yazılır ve push'ta her alıcıya anlık mesaj gider (hafta içi 08:30–19:00,
 kişi başı günde en çok 3; dışında 08:30 özetinde). Kartın `bildirim` satırı kime şimdi,
 kime özette, hangi kanaldan gideceğini ve kime hiçbir şey gitmeyeceğini adıyla söyler
 (`tf_bilgi.py bildirim-plani`, yalnız okur). Kanal tercihi (Slack, mail, WhatsApp; bir ya
@@ -187,6 +191,20 @@ deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kal�
 
 Önbellek klonunda commit'lenmemiş değişiklik varsa eklenti üzerine çekmez ve durur
 (ne yapılacağını yazar). Klonun `.kb.json` alanı beklenenle tutmazsa da durur.
+
+`/paylas` ve `/toplu-paylas` belge metnini kabuk komutuna koymaz: eşleştirme metni,
+başlık, commit mesajı ve girdi Write aracıyla `~/.tf-bilgi/gecici/` altındaki o çalıştırmaya
+ait klasöre yazılır ve dosya seçenekleriyle verilir (`--baslik-dosya`, `--mesaj-dosya`,
+`--dosya`). Bu klasör belgelerin tam metin kopyalarını tutar: başarılı kayıttan sonra
+silinir (`tf_bilgi.py temizle`, yalnız `gecici/` altını siler); Vazgeç'te klasörün yeri
+söylenir ve istenirse silinir.
+
+**KB aracı sabitli.** Eklenti, KB deposundaki `araclar/kb.py`'nin yalnız onayladığı
+sürümünü çalıştırır: sha256'sı `scripts/tf_bilgi.py` içindeki `KB_SHA256`'da durur ve bu
+repoda review'dan geçer. Klondaki `kb.py` farklıysa eklenti hiçbir komutu çalıştırmaz ve
+eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) çalışır. KB
+deposunda `kb.py` değişecekse önce bu repoda yeni hash'i ekleyen PR açılır (sürüm artar,
+`/pr-review`), sonra `kb.py` iki KB deposuna gelir (KB `CLAUDE.md` §12).
 
 ### Notlar
 

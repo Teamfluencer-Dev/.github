@@ -12,8 +12,8 @@ allowed-tools:
 
 Arguments: `$ARGUMENTS` — one or more folder or file paths, optional `--yonetim-yok`
 (do not use the yönetim repo in this run; yönetim items then stay in staging), and
-optional free text naming **recipients for the whole batch** ("Abdullah ve Oğuz'a",
-"kime: nil, gizem") and/or an explicit **"hemen haber ver"** (same words as `/paylas`).
+optional free text naming **recipients for the whole batch** ("Ayşe ve Mert'e",
+"kime: ayse, mert") and/or an explicit **"hemen haber ver"** (same words as `/paylas`).
 
 Many documents → one staging run → one approval table → one commit per area. The
 KB repo's `araclar/kb.py` owns every rule (discovery, text, scanning, matching,
@@ -71,9 +71,10 @@ before step 4 (subagents read it too).
    named → ask once whom to notify.
 
 2. **Prepare.** `TFB hazirla --yazma` (timeout 300000 ms). Exit 2 → relay the message
-   as-is and stop before staging anything (only the repo's `yazanlar` can push). Keep `kok`, `kisi`, `uzak`,
+   as-is and stop before staging anything (only the repo's `.kb.json` `yazanlar` can push;
+   it also stops when it cannot tell who the user is). Keep `kok`, `kisi`, `uzak`,
    `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay `notlar` as one short
-   line each. `kisi` null → ask as `/paylas` does (step 2 there). Read
+   line each. Read
    `<kok>/kisiler.json`: when `kisiler[kisi].alanlar` contains `yonetim` and
    `--yonetim-yok` is absent, run `TFB hazirla --yonetim --yazma` and keep its `kok` as
    `kok_y`. Exit 2 there → yönetim is unreachable for this run: say it in one line
@@ -158,15 +159,18 @@ before step 4 (subagents read it too).
 
    AskUserQuestion: question "Bu tabloyu TF Bilgi'ye göndereyim mi?", header
    "Toplu paylaş", options **Onayla** ("Her alana tek commit, sonra bağlantılar"),
-   **Düzelt** ("Neyi değiştireyim? Tablo yeniden gelir"), **Vazgeç** ("Hiçbir şey
-   yazılmaz; hazırlık klasörü kalır").
+   **Düzelt** ("Neyi değiştireyim? Tablo yeniden gelir"), **Vazgeç** ("Depoya hiçbir
+   şey yazılmaz; hazırlık klasörü kalır, istersen silerim").
    - Düzelt: apply what the user says to the `oge.json` files with Write (ask if they
      did not say what). A changed `alan` means re-deciding `konu` against that area
      (its `eslestir.json` or `TFB kb [--yonetim] eslestir --dosya <metin.txt> --json`)
      and redoing the body if it named topic ids. Moving an item from Yönetim to Ekip
      only on the user's explicit word for that item number. Rescan changed files,
      show the table again, ask again.
-   - Vazgeç: reply "Vazgeçildi; depoya hiçbir şey yazılmadı. Hazırlık: <D>" and stop.
+   - Vazgeç: reply "Vazgeçildi; depoya hiçbir şey yazılmadı. Hazırlık klasörü belgelerin tam
+     metin kopyalarıyla duruyor: <D> (ve <D>-yonetim) — silmemi istersen “temizle” yaz." and
+     stop. If the user then says temizle (sil): `TFB temizle <D> [<D>-yonetim]`, reply
+     "Silindi: <D>".
 
 6. **On Onayla — per area**, ekip first, then yönetim if on; skip an area with no
    items. Work sequentially (ids come from the files on disk).
@@ -203,7 +207,13 @@ before step 4 (subagents read it too).
       → tell the user which files wait in the cache and stop (as `/paylas` step 10.3).
    6. `TFB kaydet [--yonetim] --mesaj 'toplu-paylas: <n> girdi (<kisi>)' <every girdi yol> <every new ham yol> [ham/DEFTER.tsv when any ham-ekle returned "yeni"]`.
 
-7. **Reply.** Per written area:
+7. **Clean up** (the staging folders hold full-text copies of every document), after
+   every area's `kaydet` succeeded. Every item written, dropped or "girmez" (no yönetim
+   item left in staging) → `TFB temizle <D> [<D>-yonetim]`. Yönetim items still waiting
+   in staging (yönetim off) → keep `<D>` and delete only `<D>-yonetim` if it exists. An
+   area that failed keeps its staging.
+
+8. **Reply.** Per written area:
 
    ```
    Kaydedildi: <n> girdi → <tf-bilgi | tf-bilgi-yonetim>
@@ -211,6 +221,6 @@ before step 4 (subagents read it too).
    ```
 
    Then one line each, when non-zero: `Girmeyen: <n>` · `Atlanan: <n> (zaten var /
-   kopya)` · `Hazırlıkta kalan yönetim öğesi: <n> (<D>)` · warnings from `dogrula` /
-   `kaydet` `notlar`. End with "Konu önerilerini ve paket kartını kütüphaneci bir
-   sonraki turda işler."
+   kopya)` · `Hazırlıkta kalan yönetim öğesi: <n> (<D>; işin bitince “temizle” de)` ·
+   `Hazırlık silindi: <D>` (step 7) · warnings from `dogrula` / `kaydet` `notlar`. End
+   with "Konu önerilerini ve paket kartını kütüphaneci bir sonraki turda işler."

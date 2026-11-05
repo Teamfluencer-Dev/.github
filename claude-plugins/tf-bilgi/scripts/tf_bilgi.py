@@ -6,28 +6,38 @@ This script keeps a local cache clone of each and drives the repo's own
 `araclar/kb.py`, which owns every rule (ids, scanning, topic matching,
 validation, commit/push). The plugin depends only on the kb.py commands, flags
 and JSON shapes of the TF Bilgi contract (sections 9 and 11), never on its code.
+kb.py runs on every user's machine, so the plugin runs only the kb.py whose
+sha256 is in KB_SHA256 (reviewed here), in isolated mode (python3 -I).
 
   hazirla [--yonetim] [--yazma]  Clone or update the cache clone, resolve the
                                  person, print JSON (kok, alan, kisi, kb, uzak,
                                  yazabilir, ...). --yazma (/paylas, /toplu-paylas,
                                  /bilgi alindi): stop if GitHub says the user cannot
-                                 push to the KB repo (only Enes and Ilgım can).
+                                 push to the KB repo (only the people in its
+                                 .kb.json `yazanlar` can) or if the person is unknown.
   kb [--yonetim] <args...>       Run the cache's kb.py; stdout, stderr and exit
                                  code pass through. kaydet/yenile/ozet are refused.
-                                 toplu-hazirla (/toplu-paylas) needs absolute
-                                 source paths and one --cikti strictly under
-                                 <cache>/gecici/ (staging never lands in a clone).
+                                 alindi/izin-ekle only in your own name; a member
+                                 of `yazanlar` may record alindi for someone else
+                                 (--kaydeden <you> is added). toplu-hazirla
+                                 (/toplu-paylas) needs absolute source paths and
+                                 one --cikti strictly under <cache>/gecici/.
   gecici AD                      Save stdin as <cache>/gecici/AD (scratch input for
                                  kb.py --dosya / tara; never inside a clone).
-  maskele [--yonetim] DOSYA      kb.py tara --maskele -> masked copy in <cache>/gecici/.
+  maskele [--yonetim] DOSYA [--dizin D]
+                                 kb.py tara --maskele -> masked copy in <cache>/gecici/
+                                 (or in D, a folder under it).
+  temizle YOL...                 Delete staging folders/files; only strictly under
+                                 <cache>/gecici/ (full-text copies of documents).
   yaz [--yonetim] [--dosya F] [--uzerine]
                                  Write a new entry (stdin or F) to
-                                 girdiler/YYYY/MM/<id>.md; published entries are
-                                 never overwritten.
-  kaydet [--yonetim] --mesaj M YOL...
+                                 girdiler/YYYY/MM/<id>.md, only in your own name;
+                                 published entries are never overwritten.
+  kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL...
                                  Contract section 10 guard (only new girdiler/,
                                  ham/, onaylar/ files and an append-only
                                  ham/DEFTER.tsv), then kb.py kaydet; prints links.
+                                 F: first line of a file under <cache>/gecici/.
   prler [REF...] [--repo R]...   Read-only PR rows for a pr-listesi entry:
                                  claude-review state, merge state, stacking.
   bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D]
@@ -49,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -76,16 +87,25 @@ YENI_YOLLAR = (
     re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}--[a-z][a-z0-9]*\.md$"),
 )
 ONAY_RE = re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}--([a-z][a-z0-9]*)\.md$")
+KIMLIK_ONEKI_RE = re.compile(r"^(?:girdiler/\d{4}/\d{2}/|onaylar/)([A-Z]+)-")  # girdi/onay kimliğinin alan öneki
 DEFTER = "ham/DEFTER.tsv"
 IZINLER = "ham/IZINLER.tsv"  # insanın onayladığı yanlış alarmlar: yalnız satır eklenir, onaylayan = sen
 # Sözleşme §10: /paylas ve /bilgi oturumunun kb.py'de çalıştırabildiği alt komutlar (yazanlar yalnız
 # ham-ekle ve alindi; commit'i her zaman `tf_bilgi.py kaydet` yapar).
 KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "son", "konu", "ara", "kuyruk", "alindi",
              "izin-ekle", "toplu-hazirla")
-KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı
+KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi: yazanlar başkası adına da, kaydeden ile)
+# Sözleşme: eklenti yalnız bu sha256'lardan birine sahip araclar/kb.py'yi çalıştırır (ekip ve yönetim kopyası bayt bayt
+# aynı). kb.py değişince yeni hash buraya eklenir (eklenti PR'ı + /pr-review, sürüm artar), sonra KB depolarına kb.py
+# gelir; geçişte eski ve yeni hash birlikte durur, eski hash bir sonraki sürümde çıkar (KB CLAUDE.md §12).
+KB_SHA256 = (
+    "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",
+)
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
 KISI_SECENEGI = re.compile(r"^--ki(?:s(?:i)?)?(?:=(.*))?$")   # alindi --kisi (ve kısaltmaları)
+KAYDEDEN_SECENEGI = re.compile(r"^--ka(?:y(?:d(?:e(?:d(?:e(?:n)?)?)?)?)?)?(?:=(.*))?$")  # alindi --kaydeden
+KONTROL_KARAKTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 CIKTI_SECENEGI = re.compile(r"^--c(?:i(?:k(?:t(?:i)?)?)?)?(?:=(.*))?$")  # toplu-hazirla --cikti (ve kısaltmaları)
 KB_YASAK = {
     "kaydet": "kb.py kaydet doğrudan çalıştırılmaz: `tf_bilgi.py kaydet` kullanın (önce yolları denetler).",
@@ -119,6 +139,9 @@ MERGE_DURUMU_TR = {
 }
 ERISIM_IPUCU = ("Depo private: GitHub hesabınızın bu depoya okuma-yazma yetkisi olmalı (yoksa org "
                 "yöneticisinden isteyin) ve `gh auth status` geçerli olmalı.")
+KIM_BILINMIYOR = ("Kim olduğunuz bulunamadı; depoya yalnız kendi adınıza yazılır. Kabuk profilinize "
+                  "`export TF_BILGI_KISI=<kisiler.json anahtarınız>` ekleyip Claude Code'u yeniden başlatın (ya da "
+                  "`gh auth login` ile kisiler.json'daki GitHub hesabınıza geçin).")
 REMOTE_MANIFEST = (
     "https://raw.githubusercontent.com/Teamfluencer-Dev/.github/main/"
     "claude-plugins/tf-bilgi/.claude-plugin/plugin.json"
@@ -147,8 +170,14 @@ def alt_ortam(kok=None):
     env.setdefault("GH_PROMPT_DISABLED", "1")
     if kok is not None:
         env["TF_BILGI_KOK"] = str(kok)
-        env["PYTHONDONTWRITEBYTECODE"] = "1"  # keep the clone free of __pycache__
+        env["TF_BILGI_GECICI"] = str(onbellek_koku() / "gecici")  # kb.py --*-dosya buradan okuyabilir
     return env
+
+
+def kb_komutu(kb, *args):
+    """kb.py'yi yalıtılmış çalıştır: -I betik klasörünü sys.path'e koymaz (araclar/'a konan bir json.py ya da yaml.py
+    kb.py'nin içe aktarmasını değiştiremez) ve PYTHON* değişkenlerini yok sayar; -B klona __pycache__ yazmaz."""
+    return [sys.executable, "-I", "-B", str(kb), *args]
 
 
 def ayrinti(proc):
@@ -268,9 +297,16 @@ def depo_ayari(kok, alan):
 
 
 def kb_yolu(kok):
+    """Klonun kb.py'si; yalnız eklentinin onayladığı sürüm (KB_SHA256) çalıştırılır."""
     kb = kok / "araclar" / "kb.py"
     if not kb.is_file():
         raise Stop(f"Depoda araclar/kb.py yok ({kok}). Depo henüz kurulmamış olabilir; TF Bilgi sorumlusuna haber verin.")
+    ozet = hashlib.sha256(kb.read_bytes()).hexdigest()
+    if ozet not in KB_SHA256:
+        raise Stop("KB aracı (araclar/kb.py) eklentinin onayladığı sürüm değil; güvenlik için çalıştırmadım "
+                   f"(sha256 {ozet[:12]}…). Eklentiyi güncelle: claude plugin marketplace update teamfluencer && "
+                   "claude plugin update tf-bilgi@teamfluencer — sonra Claude Code'u yeniden başlat. Güncel "
+                   "eklentide de sürerse TF Bilgi sorumlusuna haber ver.")
     return kb
 
 
@@ -428,7 +464,7 @@ def ilk_ad(kisiler, anahtar):
 
 
 def yonelme(ad):
-    """Türkçe yönelme hâli: Enes → Enes'e, Ilgım → Ilgım'a, Ayşe → Ayşe'ye."""
+    """Türkçe yönelme hâli: Mert → Mert'e, Can → Can'a, Ayşe → Ayşe'ye, Duru → Duru'ya."""
     unlu = "aeıioöuüAEIİOÖUÜ"
     son = next((c for c in reversed(ad) if c in unlu), "e")
     return ad + "'" + ("y" if ad[-1:] and ad[-1] in unlu else "") + ("a" if son in "aıouAIOU" else "e")
@@ -447,6 +483,12 @@ def yazma_yetkisi(deger, github):
     return {"true": True, "false": False}.get(deger)
 
 
+def yazan_mi(ayar, kisi):
+    """kisi .kb.json `yazanlar` listesinde mi (başkası adına alındı yalnız onlara açık)."""
+    yazanlar = ayar.get("yazanlar")
+    return bool(kisi) and isinstance(yazanlar, list) and kisi in yazanlar
+
+
 def yetkisiz_mesaj(kok, ayar, uzak):
     """Yazma yetkisi olmayana: kimin yazabildiği (.kb.json yazanlar, adlar kisiler.json'dan) ve ne yapacağı."""
     kisiler = kisileri_oku(kok)
@@ -455,10 +497,15 @@ def yetkisiz_mesaj(kok, ayar, uzak):
     hesap = f"GitHub hesabının ({login}) " if login else "GitHub hesabının "
     okuma = "Okuma çalışmaya devam eder: /bilgi kuyrugum, /bilgi son, /bilgi konu, /bilgi ara."
     if yazanlar:
+        try:
+            ben = kisi_bul(kok, [])[0]
+        except Stop:
+            ben = None
         adlar = [ilk_ad(kisiler, k) for k in yazanlar]
         return (f"Bu depoya yalnız {adlari_bagla(adlar)} yazabiliyor; paylaşmak istediğini {yonelme(adlar[0])} ilet "
-                f"(belgeyi ya da bağlantısını gönder; 'alındı' için “alındı <girdi-id>” yaz), o kaydeder. {hesap}"
-                f"{uzak} deposunda yazma yetkisi yok. {okuma}")
+                f"(belgeyi ya da bağlantısını gönder), o kaydeder. Devir ya da karar için 'alındı' demek istiyorsan "
+                f"ona “alındı <girdi-id>” yaz; o `/bilgi alindi <girdi-id> --kisi {ben or '<anahtarın>'}` ile senin "
+                f"adına kaydeder. {hesap}{uzak} deposunda yazma yetkisi yok. {okuma}")
     return (f"{hesap}{uzak} deposunda yazma yetkisi yok; paylaşmak istediğini depoya yazabilen birine ilet. {okuma}")
 
 
@@ -489,6 +536,8 @@ def hazirla(argv):
     kisi, kaynak = kisi_bul(kok, notlar)
     kisiler = kisileri_oku(kok)
     uzak = uzak_slug(ayar, alan)
+    if args.yazma and kisi is None:
+        raise Stop(KIM_BILINMIYOR)
     if kisi is None:
         notlar.append("Kim olduğunuz bulunamadı; bir kez sorulacak. Kalıcı olsun diye kabuk profilinize "
                       "`export TF_BILGI_KISI=<kisiler.json anahtarınız>` ekleyin.")
@@ -533,12 +582,16 @@ def kb_alt_komutu(argv):
     return None
 
 
-def alindi_kisisi(argv):
+def secenek_degeri(argv, desen):
     for i, t in enumerate(argv):
-        m = KISI_SECENEGI.match(t)
+        m = desen.match(t)
         if m:
             return m.group(1) if m.group(1) is not None else (argv[i + 1] if i + 1 < len(argv) else None)
     return None
+
+
+def alindi_kisisi(argv):
+    return secenek_degeri(argv, KISI_SECENEGI)
 
 
 def toplu_hazirla_denetle(argv):
@@ -581,9 +634,21 @@ def kendi_kisin(kok):
     """Çözülen kişi; çözülemiyorsa yazma işlemi durur."""
     kisi, _ = kisi_bul(kok, [])
     if not kisi:
-        raise Stop("Kim olduğunuz bulunamadı; bu işlem yalnız kendi adınıza yapılır. Kabuk profilinize "
-                   "`export TF_BILGI_KISI=<kisiler.json anahtarınız>` ekleyin.")
+        raise Stop(KIM_BILINMIYOR)
     return kisi
+
+
+def alindi_argumanlari(kok, alan, argv, istenen, ben):
+    """alindi: kendi adına; `yazanlar`'daki biri başkası adına da (kaydeden = o). Gerekirse --kaydeden eklenir."""
+    kaydeden = secenek_degeri(argv, KAYDEDEN_SECENEGI)
+    if kaydeden not in (None, ben):
+        raise Stop(f"'alindi' kaydını yalnız kendiniz kaydedersiniz: --kaydeden {kaydeden!r} ama siz '{ben}'.")
+    if istenen == ben:
+        return argv
+    if not yazan_mi(depo_ayari(kok, alan), ben):
+        raise Stop(f"'alindi' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{ben}'. Başkası adına alındıyı "
+                   "yalnız deponun `yazanlar` listesindekiler kaydeder; onlardan birine “alındı <girdi-id>” yazın.")
+    return argv if kaydeden else [*argv, "--kaydeden", ben]  # `--` reddedildi: sona eklemek güvenli
 
 
 def kb_calistir(argv):
@@ -593,7 +658,8 @@ def kb_calistir(argv):
     if any(KOK_SECENEGI.match(t) for t in argv):
         raise Stop("--kok verilemez: kb.py her zaman TF Bilgi önbellek klonunda çalışır.")
     adlar = [t.split("=", 1)[0] for t in argv if t.startswith("--") and t != "--"]
-    if len(adlar) != len(set(adlar)) or sum(1 for t in argv if KISI_SECENEGI.match(t)) > 1:
+    if len(adlar) != len(set(adlar)) or any(sum(1 for t in argv if desen.match(t)) > 1
+                                            for desen in (KISI_SECENEGI, KAYDEDEN_SECENEGI)):
         raise Stop("Aynı seçenek iki kez verilemez (ör. --kisi). Komutu tek seçenekle tekrar yazın.")
     komut = kb_alt_komutu(argv)
     if komut in KB_YASAK:
@@ -603,13 +669,19 @@ def kb_calistir(argv):
     kok = mevcut_kok(alan)
     kb = kb_yolu(kok)
     if komut in KENDI_ADINA:
+        if "--" in argv:
+            raise Stop(f"'{komut}' komutunda `--` kullanılmaz; seçenekleri doğrudan yazın.")
         istenen, kisi = alindi_kisisi(argv), kendi_kisin(kok)
-        if istenen != kisi:
+        if istenen is None:
+            raise Stop(f"'{komut}' için --kisi gerekli (sizin anahtarınız: {kisi}).")
+        if komut == "alindi":
+            argv = alindi_argumanlari(kok, alan, argv, istenen, kisi)
+        elif istenen != kisi:
             raise Stop(f"'{komut}' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{kisi}'.")
     if komut == "toplu-hazirla":
         toplu_hazirla_denetle(argv)
     sys.stdout.flush()
-    return subprocess.run([sys.executable, str(kb), *argv], cwd=kok, env=alt_ortam(kok)).returncode
+    return subprocess.run(kb_komutu(kb, *argv), cwd=kok, env=alt_ortam(kok)).returncode
 
 
 def guvenli_ad(ad):
@@ -623,6 +695,55 @@ def gecici_dizin():
     yol = onbellek_koku() / "gecici"
     yol.mkdir(parents=True, exist_ok=True)
     return yol
+
+
+def gecici_alti(yol, ne):
+    """`yol` mutlak ve eklentinin geçici klasörünün (gecici/) kesinlikle altında (bağlantıyla dışarı çıkmadan)."""
+    gecici = gecici_dizin().resolve()
+    p = Path(yol).expanduser()
+    if not p.is_absolute():
+        raise Stop(f"{ne} mutlak yol olmalı: {yol} (örnek: {gecici}/paylas-<damga>)")
+    if gecici not in p.resolve().parents:
+        raise Stop(f"{ne} yalnız eklentinin geçici klasörünün altında olabilir ({gecici}/…): {yol}")
+    return p.resolve()
+
+
+def dosyadan_satir(yol, azami=200):
+    """Dosyanın ilk dolu satırı, kontrol karakterleri atılmış (güvenilmeyen metin kabuk argümanına girmesin diye)."""
+    for satir in Path(yol).read_text(encoding="utf-8").splitlines():
+        satir = KONTROL_KARAKTER_RE.sub("", satir).strip()
+        if satir:
+            return satir[:azami]
+    return ""
+
+
+def temizle(argv):
+    """Hazırlık klasörlerini ve geçici dosyaları siler; yalnız gecici/'nin kesinlikle altındakileri (belgelerin tam
+    metin kopyaları KVKK açısından bekletilmez). Önce hepsi denetlenir, sonra silinir; olmayan yol hata değildir."""
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py temizle")
+    parser.add_argument("yollar", nargs="+")
+    args = parser.parse_args(argv)
+    gecici = gecici_dizin().resolve()
+    hedefler = []
+    for yol in args.yollar:
+        p = Path(yol).expanduser()
+        if not p.is_absolute():
+            raise Stop(f"temizle için mutlak yol gerekli: {yol} (örnek: {gecici}/paylas-<damga>)")
+        ust = p.parent.resolve()
+        if p.name in ("", ".", "..") or not (ust == gecici or gecici in ust.parents):
+            raise Stop(f"temizle yalnız eklentinin geçici klasörünün altındakileri siler ({gecici}/…): {yol}")
+        hedefler.append(ust / p.name)
+    silinen, yoktu = [], []
+    for p in hedefler:
+        if p.is_symlink() or p.is_file():
+            p.unlink()  # bağlantının yalnız kendisi silinir, gösterdiği yer değil
+        elif p.is_dir():
+            shutil.rmtree(p)
+        else:
+            yoktu.append(str(p))
+            continue
+        silinen.append(str(p))
+    return {"silinen": silinen, "yoktu": yoktu}
 
 
 def gecici(argv):
@@ -645,18 +766,22 @@ def maskele(argv):
     alan, argv = alan_ayikla(argv)
     parser = argparse.ArgumentParser(prog="tf_bilgi.py maskele")
     parser.add_argument("dosya")
-    kaynak = Path(parser.parse_args(argv).dosya).expanduser()
+    parser.add_argument("--dizin", help="maskeli kopyanın klasörü (gecici/ altında; ör. /paylas hazırlık klasörü)")
+    args = parser.parse_args(argv)
+    kaynak = Path(args.dosya).expanduser()
     if not kaynak.is_file():
         raise Stop(f"Dosya bulunamadı: {kaynak}")
     if ikili_mi(kaynak):
         raise Stop(f"{kaynak.name} metin dosyası değil; maskelenemez. Bu dosyayı ham/'a almayın: girdide `ham: null` "
                    "ve `ham_notu: \"sır içerdiği için depoya alınmadı\"` yazın.")
+    dizin = gecici_alti(args.dizin, "--dizin") if args.dizin else gecici_dizin()
     kok = mevcut_kok(alan)
-    proc = sh([sys.executable, str(kb_yolu(kok)), "tara", str(kaynak.resolve()), "--maskele"],
+    proc = sh(kb_komutu(kb_yolu(kok), "tara", str(kaynak.resolve()), "--maskele"),
               cwd=kok, check=False, timeout=120, env=alt_ortam(kok))
     if proc.returncode not in (0, 3):
         raise Stop(f"kb.py tara --maskele başarısız (çıkış {proc.returncode}).\n{ayrinti(proc)}")
-    hedef = gecici_dizin() / f"maskeli-{guvenli_ad(kaynak.name)}"
+    dizin.mkdir(parents=True, exist_ok=True)
+    hedef = dizin / f"maskeli-{guvenli_ad(kaynak.name)}"
     hedef.write_text(proc.stdout, encoding="utf-8")
     return {"yol": str(hedef), "bulgu": proc.returncode == 3}
 
@@ -697,9 +822,9 @@ def yaz(argv):
         raise Stop(f"Girdi kimliği sözleşmeye uymuyor: {girdi_id} (beklenen: <önek>-YYYYMMDD-<kisi>-NN).")
     kok = mevcut_kok(alan)
     ayar = depo_ayari(kok, alan)
-    kisi, _ = kisi_bul(kok, [])
+    kisi = kendi_kisin(kok)  # çözülemeyen kişiyle yazılmaz: girdi yalnız kendi adınıza
     yazar = re.search(r"""(?m)^yazar:\s*["']?([a-z][a-z0-9]*)""", metin)
-    if kisi and (not yazar or yazar.group(1) != kisi or match.group(4) != kisi):
+    if not yazar or yazar.group(1) != kisi or match.group(4) != kisi:
         raise Stop(f"Girdi yalnız kendi adınıza yazılır: kimlikteki ve `yazar` alanındaki kişi '{kisi}' olmalı.")
     onek = ayar.get("girdi_onek")
     if onek and match.group(1) != onek:
@@ -745,17 +870,59 @@ def izinler_yeni_satirlari(kok):
     return yeni[len(eski):]
 
 
+def onay_kaydeden(metin):
+    """Onay dosyasının frontmatter'ındaki `kaydeden` (yoksa None)."""
+    satirlar = metin.lstrip("﻿").splitlines()
+    if not satirlar or satirlar[0].strip() != "---":
+        return None
+    for satir in satirlar[1:]:
+        if satir.strip() in ("---", "..."):
+            break
+        m = re.match(r"""^kaydeden:\s*["']?([^"'\s#]*)""", satir)
+        if m:
+            return None if m.group(1) in ("", "null", "~") else m.group(1)
+    return None
+
+
+def onay_sorunu(kok, ayar, yol):
+    """onaylar/<id>--<kisi>.md: kendi adınıza; başkası adına yalnız `yazanlar`'dan ve `kaydeden: <siz>` ile."""
+    kisi = ONAY_RE.match(yol).group(1)
+    ben = kendi_kisin(kok)
+    kaydeden = onay_kaydeden((kok / yol).read_text(encoding="utf-8"))
+    if kisi == ben:
+        return None if kaydeden in (None, ben) else f"{yol}: `kaydeden` siz olmalısınız ('{ben}'), dosyada '{kaydeden}'"
+    if not yazan_mi(ayar, ben):
+        return (f"{yol}: 'alındı' yalnız kendi adınıza kaydedilir (başkası adına yalnız deponun `yazanlar` "
+                "listesindekiler kaydeder)")
+    if kaydeden != ben:
+        return (f"{yol}: başkası adına alındıda `kaydeden: {ben}` olmalı; dosyayı `tf_bilgi.py kb alindi <girdi-id> "
+                f"--kisi {kisi}` yazar")
+    return None
+
+
 def kaydet(argv):
     alan, argv = alan_ayikla(argv)
     parser = argparse.ArgumentParser(prog="tf_bilgi.py kaydet")
-    parser.add_argument("--mesaj", required=True)
+    grup = parser.add_mutually_exclusive_group(required=True)
+    grup.add_argument("--mesaj")
+    grup.add_argument("--mesaj-dosya", dest="mesaj_dosya",
+                      help="commit mesajı bu dosyanın ilk satırından (gecici/ altında; başlık kabuğa girmez)")
     parser.add_argument("yollar", nargs="+")
     args = parser.parse_args(argv)
+    if args.mesaj_dosya is not None:
+        mesaj_dosyasi = gecici_alti(args.mesaj_dosya, "--mesaj-dosya")
+        if not mesaj_dosyasi.is_file():
+            raise Stop(f"Mesaj dosyası yok: {args.mesaj_dosya}")
+        args.mesaj = dosyadan_satir(mesaj_dosyasi)
+    if not args.mesaj.strip():
+        raise Stop("Commit mesajı boş.")
     kok = mevcut_kok(alan)
     ayar = depo_ayari(kok, alan)
+    kb = kb_yolu(kok)  # onaylanmamış kb.py'de yolları denetlemeye bile başlamadan dur
     if yazma_yetkisi(*uzak_kaynagi(alan)) is False:
         raise Stop(yetkisiz_mesaj(kok, ayar, uzak_slug(ayar, alan)))
     yollar = list(dict.fromkeys(goreli(kok, y) for y in args.yollar))
+    onek = ayar.get("girdi_onek")
     sorunlar = []
     for yol in yollar:
         if not (kok / yol).is_file():
@@ -773,8 +940,13 @@ def kaydet(argv):
                             f"{DEFTER}; geri kalanı kütüphanecinin)")
         elif yayimlanmis_mi(kok, yol):
             sorunlar.append(f"{yol}: zaten yayımlanmış; yayımlanmış dosya değiştirilmez")
-        elif ONAY_RE.match(yol) and ONAY_RE.match(yol).group(1) != kendi_kisin(kok):
-            sorunlar.append(f"{yol}: 'alındı' yalnız kendi adınıza kaydedilir")
+        elif onek and KIMLIK_ONEKI_RE.match(yol) and KIMLIK_ONEKI_RE.match(yol).group(1) != onek:
+            sorunlar.append(f"{yol}: bu deponun girdi öneki '{onek}'; bu kimlik başka alana ait (ekip ve yönetim "
+                            "girdileri birbirinin deposuna yazılmaz)")
+        elif ONAY_RE.match(yol):
+            sorun = onay_sorunu(kok, ayar, yol)
+            if sorun:
+                sorunlar.append(sorun)
     hazir = [y for y in git(kok, "diff", "--cached", "--name-only").stdout.splitlines() if y and y not in yollar]
     if hazir:
         sorunlar.append(f"başka dosyalar commit için hazırlanmış: {', '.join(hazir[:5])} — önce: "
@@ -785,7 +957,7 @@ def kaydet(argv):
         if not git(kok, "config", anahtar, check=False).stdout.strip():
             raise Stop(f"git kimliği eksik ({anahtar}). Terminalde: git config --global {anahtar} \"...\" "
                        "yapıp tekrar deneyin.")
-    proc = sh([sys.executable, str(kb_yolu(kok)), "kaydet", "--mesaj", args.mesaj, *yollar],
+    proc = sh(kb_komutu(kb, "kaydet", "--mesaj", args.mesaj, *yollar),
               cwd=kok, check=False, timeout=600, env=alt_ortam(kok))
     cikti = "\n".join(x for x in (proc.stdout.strip(), proc.stderr.strip()) if x)[-2000:]
     if proc.returncode != 0:
@@ -1139,11 +1311,11 @@ def tercih(argv):
             "cozum": kanal_cozumu(kisiler[hedef])}
 
 
-KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "yaz": yaz, "kaydet": kaydet, "prler": prler,
-            "bildirim-plani": bildirim_plani, "tercih": tercih}
+KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "temizle": temizle, "yaz": yaz,
+            "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih}
 KULLANIM = ("kullanım: tf_bilgi.py hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
-            "maskele [--yonetim] DOSYA | yaz [--yonetim] [--dosya F] [--uzerine] | "
-            "kaydet [--yonetim] --mesaj M YOL... | prler [REF...] [--repo R] | "
+            "maskele [--yonetim] DOSYA [--dizin D] | temizle YOL... | yaz [--yonetim] [--dosya F] [--uzerine] | "
+            "kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL... | prler [REF...] [--repo R] | "
             "bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D] [--haber hemen|gunluk] [--adet N] | "
             "tercih [--kanal slack,mail,whatsapp] [--kisi K]")
 

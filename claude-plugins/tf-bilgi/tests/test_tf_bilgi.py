@@ -7,6 +7,7 @@ Nothing here touches the network: GitHub URLs are rewritten to local bare repos
 All people, logins and addresses below are fictional.
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -23,6 +24,8 @@ SCRIPT = SCRIPTS / "tf_bilgi.py"
 sys.path.insert(0, str(SCRIPTS))
 import tf_bilgi  # noqa: E402
 
+GERCEK_KB_SHA256 = tf_bilgi.KB_SHA256  # the shipped pin (tests patch it to the stub's hash)
+
 # Stub of the KB repo's araclar/kb.py: only the contract surface the plugin relies on.
 STUB_KB = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -32,6 +35,22 @@ kok = os.environ.get("TF_BILGI_KOK", "")
 komut = args[0] if args else ""
 def git(*a):
     subprocess.run(["git", "-C", kok, *a], check=True, capture_output=True)
+def deger(ad):
+    for i, t in enumerate(args):
+        if t == ad:
+            return args[i + 1]
+        if t.startswith(ad + "="):
+            return t.split("=", 1)[1]
+    return None
+if komut == "alindi":
+    kisi, kaydeden = deger("--kisi"), deger("--kaydeden")
+    rel = "onaylar/%s--%s.md" % (args[1], kisi)
+    satirlar = ["---", "girdi: " + args[1], "kisi: " + kisi]
+    satirlar += ["kaydeden: " + kaydeden] if kaydeden and kaydeden != kisi else []
+    (Path(kok) / "onaylar").mkdir(exist_ok=True)
+    (Path(kok) / rel).write_text("\n".join(satirlar + ["tarih: 2026-11-05", "---", ""]), encoding="utf-8")
+    print(json.dumps({"komut": args, "durum": "yeni", "yol": rel}))
+    sys.exit(0)
 if komut == "kaydet":
     i = args.index("--mesaj")
     mesaj, yollar = args[i + 1], args[1:i] + args[i + 2:]
@@ -54,6 +73,12 @@ if komut == "tara":
 print(json.dumps({"komut": args, "kok": kok, "cwd": os.getcwd()}))
 sys.exit(int(os.environ.get("STUB_KB_CIKIS", "0")))
 '''
+STUB_SHA256 = hashlib.sha256(STUB_KB.encode("utf-8")).hexdigest()
+
+# Runs tf_bilgi.main in a fresh interpreter with KB_SHA256 set to the given hashes (the stub's), so CLI tests go
+# through the real pin check without an environment override existing in production.
+CLI_SARMAL = ("import sys; sys.path.insert(0, sys.argv[1]); import tf_bilgi; "
+              "tf_bilgi.KB_SHA256 = tuple(sys.argv[2].split(',')); sys.exit(tf_bilgi.main(sys.argv[3:]))")
 
 # Fake GitHub CLI. `repo clone` clones the github.com URL, which the test git config
 # rewrites to a local bare repo.
@@ -147,6 +172,9 @@ class Base(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+        pin = mock.patch.object(tf_bilgi, "KB_SHA256", (STUB_SHA256,))
+        pin.start()
+        self.addCleanup(pin.stop)
         self.yorumlar = self.tmp / "yorumlar.json"
         self.yorumlar.write_text("[]")
         os.environ["FAKE_GH_YORUMLAR"] = str(self.yorumlar)
@@ -224,8 +252,14 @@ class Base(unittest.TestCase):
         return out
 
     def cli(self, *argv, stdin=""):
+        proc = subprocess.run([sys.executable, "-c", CLI_SARMAL, str(SCRIPTS), ",".join(tf_bilgi.KB_SHA256), *argv],
+                              capture_output=True, text=True, input=stdin, env=dict(os.environ))
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def cli_betik(self, *argv):
+        """The real script entry point (no pin override)."""
         proc = subprocess.run([sys.executable, str(SCRIPT), *argv], capture_output=True, text=True,
-                              input=stdin, env=dict(os.environ))
+                              env=dict(os.environ))
         return proc.returncode, proc.stdout, proc.stderr
 
     def gh_calls(self):
@@ -316,12 +350,6 @@ class HazirlaTest(Base):
         self.seed_commit("ekip", "yeni.md", "x\n")
         self.assertEqual(self.ok("hazirla")["islem"], "guncellendi")
 
-    def test_missing_kb_py_stops(self):
-        git(self.seed["ekip"], "rm", "-q", "araclar/kb.py")
-        git(self.seed["ekip"], "commit", "-q", "-m", "kb yok")
-        git(self.seed["ekip"], "push", "-q", "origin", "main")
-        self.assertIn("araclar/kb.py yok", self.stop("hazirla"))
-
     def test_empty_remote_then_populated(self):
         empty = self.tmp / "uzak" / "bos.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(empty)], check=True)
@@ -340,6 +368,46 @@ class HazirlaTest(Base):
         git(self.kok(), "commit", "-q", "-m", "yerel")
         result = self.ok("hazirla")
         self.assertTrue(any("gönderilmemiş 1 commit" in n for n in result["notlar"]), result["notlar"])
+
+
+class KbSurumTest(Base):
+    """kb.py eklentiye sabitli: yalnız KB_SHA256'daki sürüm, yalıtılmış kipte (python3 -I) çalışır."""
+
+    def test_eslesen_surum_calisir(self):
+        self.assertEqual(self.ok("hazirla")["kb"], str(self.kok() / "araclar" / "kb.py"))
+        code, out, _ = self.cli("kb", "son", "--json")
+        self.assertEqual(code, 0, out)
+
+    def test_farkli_surum_hicbir_komutu_calistirmaz(self):
+        self.ok("hazirla")
+        self.seed_commit("ekip", "araclar/kb.py", STUB_KB.replace("import json,", "print('DEGISTIRILMIS-KB')\nimport json,"))
+        out = self.stop("hazirla")
+        self.assertIn("eklentinin onayladığı sürüm değil", out)
+        self.assertIn("claude plugin marketplace update teamfluencer && claude plugin update tf-bilgi@teamfluencer", out)
+        code, out, err = self.cli("kb", "son", "--json")
+        self.assertEqual(code, 2)
+        self.assertNotIn("DEGISTIRILMIS-KB", out + err)
+        for argv in (("maskele", str(self.kok() / "KONULAR.md")), ("kaydet", "--mesaj", "m", "KONULAR.md")):
+            self.assertIn("onayladığı sürüm değil", self.stop(*argv), argv)
+
+    def test_dosya_yoksa_durur(self):
+        git(self.seed["ekip"], "rm", "-q", "araclar/kb.py")
+        git(self.seed["ekip"], "commit", "-q", "-m", "kb yok")
+        git(self.seed["ekip"], "push", "-q", "origin", "main")
+        self.assertIn("araclar/kb.py yok", self.stop("hazirla"))
+
+    def test_yanina_konan_modul_kb_py_yi_degistiremez(self):
+        self.seed_commit("ekip", "araclar/json.py", "raise SystemExit('araclar/json.py yüklendi')\n")
+        self.ok("hazirla")
+        code, out, err = self.cli("kb", "son", "--json")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(json.loads(out)["komut"], ["son", "--json"])
+        self.assertFalse(list(self.kok().rglob("__pycache__")))
+
+    def test_sabit_bicimi(self):
+        self.assertTrue(GERCEK_KB_SHA256)
+        for ozet in GERCEK_KB_SHA256:
+            self.assertRegex(ozet, r"^[0-9a-f]{64}$")
 
 
 class KisiTest(Base):
@@ -486,11 +554,40 @@ class KbGecisTest(Base):
     def test_alindi_only_for_resolved_person(self):
         self.ok("hazirla")
         self.assertIn("Kim olduğunuz bulunamadı", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert"))
-        os.environ["TF_BILGI_KISI"] = "ayse"
-        self.assertIn("kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert"))
-        self.assertIn("kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--ki=mert"))
-        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse")
+        os.environ["TF_BILGI_KISI"] = "mert"  # yazanlar'da değil
+        for argv in (("--kisi", "ayse"), ("--ki=ayse",)):
+            out = self.stop("kb", "alindi", "B-20261029-ayse-01", *argv)
+            self.assertIn("yalnız kendi adınıza", out)
+            self.assertIn("`yazanlar` listesindekiler kaydeder", out)
+        self.assertIn("yalnız kendiniz kaydedersiniz",
+                      self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--kaydeden", "ayse"))
+        self.assertIn("--kisi gerekli", self.stop("kb", "alindi", "B-20261029-ayse-01"))
+        self.assertFalse((self.kok() / "onaylar").exists())
+        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--json")
         self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["komut"], ["alindi", "B-20261029-ayse-01", "--kisi", "mert", "--json"])
+
+    def test_yazan_baskasi_adina_alindi_kaydeder(self):
+        """.kb.json yazanlar'daki biri (ayse) yazma yetkisi olmayanın (mert) alındısını kaydeder: kaydeden = ayse."""
+        self.ok("hazirla")
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--json")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["komut"],
+                         ["alindi", "B-20261029-ayse-01", "--kisi", "mert", "--json", "--kaydeden", "ayse"])
+        self.assertIn("kaydeden: ayse", (self.kok() / "onaylar/B-20261029-ayse-01--mert.md").read_text())
+        code, out, _ = self.cli("kb", "--json", "alindi", "B-20261029-ayse-01", "--kisi", "mert")
+        self.assertEqual(json.loads(out)["komut"],
+                         ["--json", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--kaydeden", "ayse"])
+        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--ka=ayse")
+        self.assertEqual(json.loads(out)["komut"], ["alindi", "B-20261029-ayse-01", "--kisi", "mert", "--ka=ayse"])
+        self.assertIn("yalnız kendiniz kaydedersiniz",
+                      self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--kaydeden", "mert"))
+        self.assertIn("iki kez", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--kaydeden", "ayse",
+                                           "--ka", "ayse"))
+        self.assertIn("`--` kullanılmaz", self.stop("kb", "alindi", "--", "B-20261029-ayse-01", "--kisi", "mert"))
+        self.assertIn("kendi adınıza", self.stop("kb", "izin-ekle", "x.pdf", "--kategori", "telefon", "--kisi", "mert",
+                                                 "--gerekce", "santral"))  # izin-ekle'de başkası adına yok
 
     def test_needs_hazirla_first(self):
         self.assertIn("hazirla", self.stop("kb", "son"))
@@ -547,7 +644,13 @@ class TopluHazirlaTest(Base):
 class YazTest(Base):
     def setUp(self):
         super().setUp()
+        os.environ["TF_BILGI_KISI"] = "ayse"
         self.ok("hazirla")
+
+    def test_unresolved_person_is_refused(self):
+        del os.environ["TF_BILGI_KISI"]  # gh girişi yok, git e-postası kisiler.json'da yok
+        self.assertIn("Kim olduğunuz bulunamadı", self.stop("yaz", stdin=girdi_metni()))
+        self.assertFalse((self.kok() / "girdiler/2026/11").exists())
 
     def test_writes_new_entry_to_dated_path(self):
         result = self.ok("yaz", stdin=girdi_metni())
@@ -588,11 +691,51 @@ class YazTest(Base):
 class KaydetTest(Base):
     def setUp(self):
         super().setUp()
+        os.environ["TF_BILGI_KISI"] = "ayse"
         self.ok("hazirla")
 
-    def published(self, rel):
-        return subprocess.run(["git", "-C", str(self.bare["ekip"]), "cat-file", "-e", f"main:{rel}"],
+    def published(self, rel, alan="ekip"):
+        return subprocess.run(["git", "-C", str(self.bare[alan]), "cat-file", "-e", f"main:{rel}"],
                               capture_output=True).returncode == 0
+
+    def onay_yaz(self, kisi, kaydeden=None, girdi="B-20261029-ayse-01"):
+        rel = f"onaylar/{girdi}--{kisi}.md"
+        (self.kok() / "onaylar").mkdir(exist_ok=True)
+        (self.kok() / rel).write_text(f"---\ngirdi: {girdi}\nkisi: {kisi}\n"
+                                      + (f"kaydeden: {kaydeden}\n" if kaydeden else "") + "tarih: 2026-11-05\n---\n")
+        return rel
+
+    def test_yonetim_commits_to_yonetim_and_refuses_ekip_ids(self):
+        self.ok("hazirla", "--yonetim")
+        ekip_once = git(self.bare["ekip"], "rev-parse", "main")
+        metin = girdi_metni("BY-20261105-ayse-01").replace("alan: ekip", "alan: yonetim")
+        entry = self.ok("yaz", "--yonetim", stdin=metin)["yol"]
+        self.assertEqual(entry, "girdiler/2026/11/BY-20261105-ayse-01.md")
+        result = self.ok("kaydet", "--yonetim", "--mesaj", "BY-20261105-ayse-01: Deneme", entry)
+        self.assertTrue(result["gonderildi"])
+        self.assertTrue(result["baglantilar"][0]["url"].startswith(
+            "https://github.com/Teamfluencer-Dev/tf-bilgi-yonetim/blob/main/"))
+        self.assertTrue(self.published(entry, "yonetim"))
+        self.assertFalse(self.published(entry, "ekip"))
+        self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), ekip_once)
+        ekip_yolu = "girdiler/2026/11/B-20261105-ayse-01.md"  # ekip kimliği yönetim klonunda
+        (self.kok("yonetim") / ekip_yolu).write_text(girdi_metni())
+        out = self.stop("kaydet", "--yonetim", "--mesaj", "m", ekip_yolu)
+        self.assertIn("bu deponun girdi öneki 'BY'", out)
+        self.assertFalse(self.published(ekip_yolu, "yonetim"))
+
+    def test_mesaj_dosyadan_ilk_satir(self):
+        entry = self.ok("yaz", stdin=girdi_metni())["yol"]
+        mesaj = self.cache / "gecici" / "paylas-1" / "mesaj.txt"
+        mesaj.parent.mkdir(parents=True)
+        mesaj.write_text("\n  B-20261105-ayse-01: Başlık 'tırnak' $(touch PWNED)\x07\nikinci satır\n", encoding="utf-8")
+        disari = self.tmp / "mesaj.txt"
+        disari.write_text("x\n")
+        self.assertIn("geçici klasörünün altında", self.stop("kaydet", "--mesaj-dosya", str(disari), entry))
+        self.ok("kaydet", "--mesaj-dosya", str(mesaj), entry)
+        self.assertEqual(git(self.bare["ekip"], "log", "-1", "--format=%s", "main"),
+                         "B-20261105-ayse-01: Başlık 'tırnak' $(touch PWNED)")
+        self.assertFalse((self.kok() / "PWNED").exists())
 
     def test_commits_and_pushes_new_entry_raw_file_and_ledger(self):
         entry = self.ok("yaz", stdin=girdi_metni())["yol"]
@@ -639,15 +782,29 @@ class KaydetTest(Base):
         self.assertIn("dosya yok", self.stop("kaydet", "--mesaj", "m", "girdiler/2026/11/B-20261105-ayse-09.md"))
 
     def test_accepts_new_onay_file(self):
-        onay = "onaylar/B-20261029-ayse-01--mert.md"
-        (self.kok() / onay).parent.mkdir(parents=True)
-        (self.kok() / onay).write_text("---\ngirdi: B-20261029-ayse-01\nkisi: mert\ntarih: 2026-11-05\n---\n")
-        os.environ["TF_BILGI_KISI"] = "ayse"
-        self.assertIn("kendi adınıza", self.stop("kaydet", "--mesaj", "x", onay))
+        onay = self.onay_yaz("mert")
+        self.assertIn("`kaydeden: ayse` olmalı", self.stop("kaydet", "--mesaj", "x", onay))  # yazan ama işaretsiz
         os.environ["TF_BILGI_KISI"] = "mert"
         result = self.ok("kaydet", "--mesaj", "alindi: B-20261029-ayse-01 (mert)", onay)
         self.assertTrue(self.published(onay))
         self.assertEqual(result["baglantilar"][0]["yol"], onay)
+
+    def test_yazan_baskasi_adina_onay_kaydeder(self):
+        """ayse (.kb.json yazanlar) yazma yetkisi olmayan mert'in alındısını kaydeder; onayda kaydeden görünür."""
+        onay = self.onay_yaz("mert", kaydeden="ayse")
+        self.ok("kaydet", "--mesaj", "alindi: B-20261029-ayse-01 (mert, kaydeden ayse)", onay)
+        self.assertTrue(self.published(onay))
+        self.assertIn("kaydeden: ayse", git(self.bare["ekip"], "show", f"main:{onay}"))
+
+    def test_yazan_olmayan_baskasi_adina_kaydedemez(self):
+        os.environ["TF_BILGI_KISI"] = "mert"  # yazanlar'da değil
+        before = git(self.bare["ekip"], "rev-parse", "main")
+        for kaydeden in ("mert", None):
+            onay = self.onay_yaz("ayse", kaydeden=kaydeden)
+            self.assertIn("yalnız kendi adınıza kaydedilir", self.stop("kaydet", "--mesaj", "x", onay), kaydeden)
+        kendi = self.onay_yaz("mert", kaydeden="ayse")  # kendi onayında başkası kaydeden olamaz
+        self.assertIn("`kaydeden` siz olmalısınız", self.stop("kaydet", "--mesaj", "x", kendi))
+        self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), before)
 
     def test_izinler_append_only_and_own_name(self):
         izin = self.kok() / "ham" / "IZINLER.tsv"
@@ -672,8 +829,10 @@ class KaydetTest(Base):
 
     def test_kb_failure_is_relayed(self):
         entry = self.ok("yaz", stdin=girdi_metni())["yol"]
-        (self.kok() / "araclar" / "kb.py").write_text("import sys\nprint('itme reddedildi')\nsys.exit(1)\n")
-        out = self.stop("kaydet", "--mesaj", "m", entry)
+        basarisiz = "import sys\nprint('itme reddedildi')\nsys.exit(1)\n"
+        (self.kok() / "araclar" / "kb.py").write_text(basarisiz)
+        with mock.patch.object(tf_bilgi, "KB_SHA256", (hashlib.sha256(basarisiz.encode()).hexdigest(),)):
+            out = self.stop("kaydet", "--mesaj", "m", entry)
         self.assertIn("kb.py kaydet başarısız", out)
         self.assertIn("itme reddedildi", out)
 
@@ -704,6 +863,60 @@ class GeciciMaskeleTest(Base):
         pdf = self.tmp / "rapor.pdf"
         pdf.write_bytes(b"%PDF-1.4\x00\x01")
         self.assertIn("ham: null", self.stop("maskele", str(pdf)))
+
+    def test_maskele_into_run_folder_under_gecici_only(self):
+        self.ok("hazirla")
+        src = self.tmp / "notlar.txt"
+        src.write_text("token GIZLI-ANAHTAR-123 burada\n")
+        dizin = self.cache / "gecici" / "paylas-20261105-120000"
+        result = self.ok("maskele", str(src), "--dizin", str(dizin))
+        self.assertEqual(Path(result["yol"]), dizin / "maskeli-notlar.txt")
+        for kotu in (str(self.tmp / "disari"), "goreli", str(self.cache / "gecici")):
+            self.assertIn("--dizin", self.stop("maskele", str(src), "--dizin", kotu), kotu)
+        self.assertFalse((self.tmp / "disari").exists())
+
+
+class TemizleTest(Base):
+    """Hazırlık klasörleri (belgelerin tam metin kopyaları) yalnız gecici/ altında silinir."""
+
+    def setUp(self):
+        super().setUp()
+        self.gecici = self.cache / "gecici"
+        self.d = self.gecici / "paylas-20261105-120000"
+        (self.d / "alt").mkdir(parents=True)
+        (self.d / "metin.txt").write_text("belge metni\n")
+        (self.d / "alt" / "kaynak.pdf").write_bytes(b"%PDF")
+        self.d2 = self.gecici / "toplu-20261105-120000-yonetim"
+        self.d2.mkdir()
+        self.disari = self.tmp / "disari"
+        self.disari.mkdir()
+        (self.disari / "kalmali.txt").write_text("x\n")
+
+    def test_silinir_ve_olmayan_hata_degil(self):
+        yok = self.gecici / "toplu-yok"
+        result = self.ok("temizle", str(self.d), str(self.d2), str(yok))
+        self.assertEqual(result, {"silinen": [str(self.d.resolve()), str(self.d2.resolve())], "yoktu": [str(yok.resolve())]})
+        self.assertFalse(self.d.exists() or self.d2.exists())
+        self.assertTrue(self.gecici.is_dir())
+
+    def test_gecici_disi_reddedilir_ve_hicbiri_silinmez(self):
+        (self.gecici / "bag").symlink_to(self.disari)
+        self.ok("hazirla")
+        for kotu in (str(self.gecici), str(self.gecici) + "/", str(self.gecici / ".."), str(self.disari),
+                     str(self.gecici / ".." / "tf-bilgi"), str(self.kok()), str(self.gecici / "bag" / "kalmali.txt"),
+                     "paylas-20261105-120000", str(self.d / "..")):
+            out = self.stop("temizle", str(self.d), kotu)
+            self.assertTrue("geçici klasörünün altındakileri" in out or "mutlak yol" in out, (kotu, out))
+        self.assertTrue((self.d / "metin.txt").exists())
+        self.assertTrue((self.disari / "kalmali.txt").exists())
+        self.assertTrue((self.kok() / ".kb.json").exists())
+
+    def test_baglanti_yalniz_kendisi_silinir(self):
+        bag = self.gecici / "bag"
+        bag.symlink_to(self.disari)
+        self.assertEqual(self.ok("temizle", str(bag))["silinen"], [str(bag)])
+        self.assertFalse(bag.is_symlink())
+        self.assertTrue((self.disari / "kalmali.txt").exists())
 
 
 class PrlerTest(Base):
@@ -768,24 +981,35 @@ class PrlerTest(Base):
 
 
 class YetkiTest(Base):
-    """6 Kas kararı: depoya yalnız `yazanlar` yazar. Yazma işleri taslaktan önce durur, okuma çalışır."""
+    """Depoya yalnız .kb.json `yazanlar` yazar. Yazma işleri taslaktan önce durur, okuma çalışır; yazma yetkisi
+    olmayanın alındısını `yazanlar`'daki biri onun adına kaydeder (onay dosyasında `kaydeden`)."""
 
     def setUp(self):
         super().setUp()
         self.github_uzak()
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"  # yazanlar'da
 
     def test_yetki_varsa_gecer(self):
         result = self.ok("hazirla", "--yazma")
         self.assertIs(result["yazabilir"], True)
+        self.assertEqual(result["kisi"], "ayse")
         self.assertIn(["api", "repos/Teamfluencer-Dev/tf-bilgi", "--jq", ".permissions.push"], self.gh_calls())
+
+    def test_kim_oldugu_bilinmiyorsa_yazma_durur(self):
+        os.environ["FAKE_GH_LOGIN"] = "bilinmeyen-gh"
+        self.assertIsNone(self.ok("hazirla")["kisi"])  # okuma yolu durmaz, kişi sorulur
+        out = self.stop("hazirla", "--yazma")
+        self.assertIn("Kim olduğunuz bulunamadı; depoya yalnız kendi adınıza yazılır", out)
+        self.assertIn("export TF_BILGI_KISI=", out)
 
     def test_yetki_yoksa_yazma_durur_okuma_calisir(self):
         os.environ.update({"FAKE_GH_PUSH": "false", "FAKE_GH_LOGIN": "mert-gh"})
         self.assertIs(self.ok("hazirla")["yazabilir"], False)  # okuma yolu durmaz
         out = self.stop("hazirla", "--yazma")
         self.assertTrue(out.startswith("Bu depoya yalnız Ayşe yazabiliyor; paylaşmak istediğini Ayşe'ye ilet"), out)
-        for parca in ("“alındı <girdi-id>”", "GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma "
-                      "yetkisi yok", "/bilgi kuyrugum"):
+        for parca in ("ona “alındı <girdi-id>” yaz; o `/bilgi alindi <girdi-id> --kisi mert` ile senin adına kaydeder",
+                      "GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma yetkisi yok",
+                      "/bilgi kuyrugum"):
             self.assertIn(parca, out)
         code, _, _ = self.cli("kb", "son", "--json")
         self.assertEqual(code, 0)
@@ -795,6 +1019,24 @@ class YetkiTest(Base):
         before = git(self.bare["ekip"], "rev-parse", "main")
         self.assertIn("yalnız Ayşe yazabiliyor", self.stop("kaydet", "--mesaj", "alindi", onay))
         self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), before)
+
+    def test_yazan_yetkisizin_alindisini_kaydeder(self):
+        """Mesajın söylediği yol uçtan uca: mert “alındı <id>” yazar, ayse kaydeder; onayda kaydeden: ayse."""
+        self.assertIs(self.ok("hazirla", "--yazma")["yazabilir"], True)
+        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert", "--json")
+        self.assertEqual(code, 0, out)
+        onay = json.loads(out)["yol"]
+        result = self.ok("kaydet", "--mesaj", "alindi: B-20261029-ayse-01 (mert, kaydeden ayse)", onay)
+        self.assertTrue(result["gonderildi"])
+        yayinda = git(self.bare["ekip"], "show", f"main:{onay}")
+        self.assertIn("kisi: mert", yayinda)
+        self.assertIn("kaydeden: ayse", yayinda)
+
+    def test_yazan_olmayan_baskasi_adina_kaydedemez(self):
+        os.environ["FAKE_GH_LOGIN"] = "mert-gh"  # yetkisi olsa bile yazanlar'da değil
+        self.ok("hazirla", "--yazma")
+        self.assertIn("yalnız kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse"))
+        self.assertFalse((self.kok() / "onaylar").exists())
 
     def test_denetlenemezse_durmaz(self):
         os.environ["FAKE_GH_REPO_CIKIS"] = "1"
@@ -815,8 +1057,8 @@ class YetkiTest(Base):
         self.assertFalse(any(c[:1] == ["api"] and c[1].startswith("repos/") for c in self.gh_calls()))
 
     def test_yonelme(self):
-        self.assertEqual([tf_bilgi.yonelme(a) for a in ("Enes", "Ilgım", "Ayşe", "Oğuz")],
-                         ["Enes'e", "Ilgım'a", "Ayşe'ye", "Oğuz'a"])
+        self.assertEqual([tf_bilgi.yonelme(a) for a in ("Mert", "Can", "Ayşe", "Duru", "Işık")],
+                         ["Mert'e", "Can'a", "Ayşe'ye", "Duru'ya", "Işık'a"])
 
 
 class TercihTest(Base):
@@ -943,14 +1185,21 @@ class CliTest(Base):
         self.assertEqual(json.loads(out)["alan"], "ekip")
 
     def test_stop_exits_2_with_turkish_message(self):
-        code, out, _ = self.cli("kb", "son")
+        code, out, _ = self.cli_betik("kb", "son")
         self.assertEqual(code, 2)
         self.assertIn("önce", out)
 
+    def test_real_entry_point_enforces_the_shipped_pin(self):
+        self.ok("hazirla")  # stub kb.py, not the shipped hash
+        code, out, _ = self.cli_betik("hazirla")
+        self.assertEqual(code, 2)
+        self.assertIn("eklentinin onayladığı sürüm değil", out)
+
     def test_usage(self):
-        code, _, err = self.cli()
+        code, _, err = self.cli_betik()
         self.assertEqual(code, 64)
         self.assertIn("kullanım", err)
+        self.assertIn("temizle", err)
 
 
 if __name__ == "__main__":
