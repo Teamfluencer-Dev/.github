@@ -70,6 +70,20 @@ if args[:2] == ["api", "user"]:
         sys.exit(1)
     print(login)
     sys.exit(0)
+if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/"):  # push yetkisi
+    if os.environ.get("FAKE_GH_REPO_CIKIS"):
+        sys.exit(int(os.environ["FAKE_GH_REPO_CIKIS"]))
+    print(os.environ.get("FAKE_GH_PUSH", "true"))
+    sys.exit(0)
+if args[:2] == ["api", "--paginate"] and "/issues/" in args[2]:  # tercih yorumları, --jq .[]
+    if os.environ.get("FAKE_GH_YORUM_CIKIS"):
+        sys.exit(int(os.environ["FAKE_GH_YORUM_CIKIS"]))
+    for yorum in json.load(open(os.environ["FAKE_GH_YORUMLAR"])):
+        print(json.dumps(yorum))
+    sys.exit(0)
+if args[:2] == ["issue", "comment"]:
+    print("https://github.com/%s/issues/%s#issuecomment-99" % (args[args.index("-R") + 1], args[2]))
+    sys.exit(0)
 if args[:2] == ["repo", "clone"]:
     slug, hedef = args[2], args[3]
     sys.exit(subprocess.run(["git", "clone", "-q", "https://github.com/%s.git" % slug, hedef]).returncode)
@@ -133,7 +147,11 @@ class Base(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE"):
+        self.yorumlar = self.tmp / "yorumlar.json"
+        self.yorumlar.write_text("[]")
+        os.environ["FAKE_GH_YORUMLAR"] = str(self.yorumlar)
+        for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
+                     "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI"):
             os.environ.pop(name, None)
         for key, value in (("user.name", "Test"), ("user.email", "test@ornek.test"),
                            ("init.defaultBranch", "main"), ("commit.gpgsign", "false")):
@@ -159,7 +177,8 @@ class Base(unittest.TestCase):
         onek = "B" if alan == "ekip" else "BY"
         files = {
             ".kb.json": json.dumps({"alan": alan, "girdi_onek": onek, "konu_onek": "K" if alan == "ekip" else "KY",
-                                    "uzak": tf_bilgi.ALANLAR[alan]["uzak"]}),
+                                    "uzak": tf_bilgi.ALANLAR[alan]["uzak"], "yazanlar": ["ayse"],
+                                    "tercih_issue": 7, "tercih_yoneticileri": ["ayse"]}),
             "kisiler.json": json.dumps(KISILER, ensure_ascii=False),
             "KONULAR.md": "# Konular\n",
             "araclar/kb.py": STUB_KB,
@@ -211,6 +230,18 @@ class Base(unittest.TestCase):
 
     def gh_calls(self):
         return [json.loads(line) for line in self.gh_log.read_text().splitlines() if line.strip()]
+
+    def github_uzak(self):
+        """Varsayılan GitHub slug'ı (gh ile klon, yetki denetimi); URL yerel bare depoya yönlenir."""
+        del os.environ["TF_BILGI_UZAK_EKIP"]
+        self.set_git_config(f"url.{self.bare['ekip']}.insteadOf", "https://github.com/Teamfluencer-Dev/tf-bilgi.git")
+
+    def yorum(self, *yorumlar):
+        self.yorumlar.write_text(json.dumps(list(yorumlar)))
+
+
+def yorum(login, govde, no=1, zaman="2026-11-05T09:00:00Z", duzenlendi=None):
+    return {"id": no, "user": {"login": login}, "body": govde, "created_at": zaman, "updated_at": duzenlendi or zaman}
 
 
 class HazirlaTest(Base):
@@ -734,6 +765,175 @@ class PrlerTest(Base):
         self.ok("prler", "api#1976", "@me", "--repo", "api")
         for call in self.gh_calls():
             self.assertIn(call[:2], (["auth", "status"], ["pr", "view"], ["pr", "list"]), call)
+
+
+class YetkiTest(Base):
+    """6 Kas kararı: depoya yalnız `yazanlar` yazar. Yazma işleri taslaktan önce durur, okuma çalışır."""
+
+    def setUp(self):
+        super().setUp()
+        self.github_uzak()
+
+    def test_yetki_varsa_gecer(self):
+        result = self.ok("hazirla", "--yazma")
+        self.assertIs(result["yazabilir"], True)
+        self.assertIn(["api", "repos/Teamfluencer-Dev/tf-bilgi", "--jq", ".permissions.push"], self.gh_calls())
+
+    def test_yetki_yoksa_yazma_durur_okuma_calisir(self):
+        os.environ.update({"FAKE_GH_PUSH": "false", "FAKE_GH_LOGIN": "mert-gh"})
+        self.assertIs(self.ok("hazirla")["yazabilir"], False)  # okuma yolu durmaz
+        out = self.stop("hazirla", "--yazma")
+        self.assertTrue(out.startswith("Bu depoya yalnız Ayşe yazabiliyor; paylaşmak istediğini Ayşe'ye ilet"), out)
+        for parca in ("“alındı <girdi-id>”", "GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma "
+                      "yetkisi yok", "/bilgi kuyrugum"):
+            self.assertIn(parca, out)
+        code, _, _ = self.cli("kb", "son", "--json")
+        self.assertEqual(code, 0)
+        onay = "onaylar/B-20261029-ayse-01--mert.md"
+        (self.kok() / onay).parent.mkdir(parents=True)
+        (self.kok() / onay).write_text("---\ngirdi: B-20261029-ayse-01\nkisi: mert\ntarih: 2026-11-05\n---\n")
+        before = git(self.bare["ekip"], "rev-parse", "main")
+        self.assertIn("yalnız Ayşe yazabiliyor", self.stop("kaydet", "--mesaj", "alindi", onay))
+        self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), before)
+
+    def test_denetlenemezse_durmaz(self):
+        os.environ["FAKE_GH_REPO_CIKIS"] = "1"
+        result = self.ok("hazirla", "--yazma")
+        self.assertIsNone(result["yazabilir"])
+        self.assertTrue(any("denetlenemedi" in n for n in result["notlar"]), result["notlar"])
+
+    def test_yazanlar_yoksa_genel_mesaj(self):
+        self.seed_commit("ekip", ".kb.json", json.dumps({"alan": "ekip", "girdi_onek": "B",
+                                                         "uzak": "Teamfluencer-Dev/tf-bilgi"}))
+        os.environ["FAKE_GH_PUSH"] = "false"
+        out = self.stop("hazirla", "--yazma")
+        self.assertIn("deposunda yazma yetkisi yok; paylaşmak istediğini depoya yazabilen birine ilet", out)
+
+    def test_yerel_uzakta_denetim_yok(self):
+        os.environ["TF_BILGI_UZAK_EKIP"] = str(self.bare["ekip"])
+        self.assertIsNone(self.ok("hazirla", "--yazma")["yazabilir"])
+        self.assertFalse(any(c[:1] == ["api"] and c[1].startswith("repos/") for c in self.gh_calls()))
+
+    def test_yonelme(self):
+        self.assertEqual([tf_bilgi.yonelme(a) for a in ("Enes", "Ilgım", "Ayşe", "Oğuz")],
+                         ["Enes'e", "Ilgım'a", "Ayşe'ye", "Oğuz'a"])
+
+
+class TercihTest(Base):
+    def setUp(self):
+        super().setUp()
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
+        self.ok("hazirla")
+
+    def test_issue_yoksa_durur(self):
+        self.seed_commit("ekip", ".kb.json", json.dumps({"alan": "ekip", "girdi_onek": "B", "uzak": "Teamfluencer-Dev/tf-bilgi",
+                                                         "tercih_issue": None, "tercih_yoneticileri": ["ayse"]}))
+        self.ok("hazirla")
+        out = self.stop("tercih")
+        self.assertIn("issue'su henüz açılmamış", out)
+        self.assertIn("Ayşe'ye söyle", out)
+        self.assertFalse(any(c[:2] == ["issue", "comment"] for c in self.gh_calls()))
+
+    def test_okuma_varsayilan_ve_tercih(self):
+        result = self.ok("tercih")
+        self.assertEqual((result["kisi"], result["kanallar"], result["varsayilan"]), ("ayse", ["slack"], True))
+        self.assertEqual(result["issue"], "https://github.com/Teamfluencer-Dev/tf-bilgi/issues/7")
+        self.assertIn("e-postadan aranır", result["cozum"]["slack"])  # Slack kimliği kayıtlı değil, e-posta var
+        self.assertEqual(result["cozum"]["mail"], "e-posta kayıtlı")
+        self.assertIn("henüz kapalı", result["cozum"]["whatsapp"])
+        self.yorum(yorum("ayse-gh", "tercih: kanal=slack,mail", 1),
+                   yorum("ayse-gh", "tercih: kanal=whatsapp", 2, "2026-11-05T10:00:00Z", "2026-11-05T11:00:00Z"))
+        result = self.ok("tercih")
+        self.assertEqual((result["kanallar"], result["varsayilan"]), (["slack", "mail"], False))
+        self.assertEqual(result["kaynak"], "yorum 2026-11-05 · ayse-gh")
+        self.assertTrue(any("düzenlenmiş" in u for u in result["uyarilar"]))
+        self.assertIn(["api", "--paginate", "repos/Teamfluencer-Dev/tf-bilgi/issues/7/comments?per_page=100",
+                       "--jq", ".[]"], self.gh_calls())
+
+    def test_kendi_adina_yazar(self):
+        result = self.ok("tercih", "--kanal", "Slack, mail,slack")
+        self.assertEqual((result["satir"], result["kanallar"]), ("tercih: kanal=slack,mail", ["slack", "mail"]))
+        self.assertIn(["issue", "comment", "7", "-R", "Teamfluencer-Dev/tf-bilgi", "--body", "tercih: kanal=slack,mail"],
+                      self.gh_calls())
+        self.assertTrue(result["url"].endswith("#issuecomment-99"))
+        self.assertIn("kanal anlaşılmadı", self.stop("tercih", "--kanal", "telefon").lower())
+
+    def test_baskasi_adina_yalniz_yonetici(self):
+        result = self.ok("tercih", "--kisi", "mert", "--kanal", "whatsapp")
+        self.assertEqual(result["satir"], "tercih: kisi=mert kanal=whatsapp")
+        os.environ["FAKE_GH_LOGIN"] = "mert-gh"
+        out = self.stop("tercih", "--kisi", "ayse", "--kanal", "mail")
+        self.assertIn("yalnız tercih yöneticileri yazar (Ayşe)", out)
+
+    def test_github_hesabi_eslesmezse_yazmaz(self):
+        os.environ.update({"FAKE_GH_LOGIN": "", "TF_BILGI_KISI": "mert"})
+        out = self.stop("tercih", "--kanal", "mail")
+        self.assertIn("GitHub girişin (yok) kisiler.json'daki hesabınla (mert-gh) aynı değil", out)
+        self.assertFalse(any(c[:2] == ["issue", "comment"] for c in self.gh_calls()))
+
+    def test_kurallar_bildir_ile_ayni(self):
+        sonuc, uyarilar = tf_bilgi.tercih_coz([
+            yorum("AYSE-GH", "tercih: kanal=mail", 1),
+            yorum("mert-gh", "tercih: kisi=ayse kanal=slack", 2),      # yönetici değil
+            yorum("ayse-gh", "tercih: kisi=mert kanal=whatsapp", 3),   # yönetici
+            yorum("yabanci", "tercih: kanal=slack", 4),
+            yorum("ayse-gh", "tercih: kanal=faks", 5)], KISILER["kisiler"], {"ayse"})
+        self.assertEqual(sonuc, {"ayse": {"kanallar": ["mail"], "kaynak": "yorum 2026-11-05 · AYSE-GH"},
+                                 "mert": {"kanallar": ["whatsapp"], "kaynak": "yorum 2026-11-05 · ayse-gh"}})
+        self.assertEqual(len(uyarilar), 3)
+
+
+class BildirimPlaniTest(Base):
+    def setUp(self):
+        super().setUp()
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"].update({
+            "ali": {"ad": "Ali Örnek", "alanlar": ["ekip"], "slack": "U0ALI", "eposta": None, "github": None},
+            "zeynep": {"ad": "Zeynep Örnek", "alanlar": ["ekip"], "slack": None, "eposta": None, "github": None},
+            "can": {"ad": "Can Örnek", "alanlar": ["yonetim"], "slack": "U0CAN", "eposta": None, "github": None}})
+        self.seed_commit("ekip", "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        self.ok("hazirla")
+
+    def plan(self, *argv, an="2026-11-05T10:00:00+03:00"):
+        os.environ["TF_BILGI_SIMDI"] = an
+        return self.ok("bildirim-plani", "--yazar", "ayse", *argv)
+
+    def test_hemen_simdi_ve_kanalsiz_kisi(self):
+        r = self.plan("--tip", "BILGI", "--kimden", "ali,mert,zeynep,can,ayse", "--haber", "hemen")
+        self.assertTrue(r["anlik"])
+        self.assertEqual(r["satir"], "şimdi anlık: Ali (Slack), Mert (Slack/mail) · Can'a bildirim gitmez (ekip "
+                                     "alanının üyesi değil) · sen (gönderen) bildirim almazsın · Zeynep: kayıtlı kanal "
+                                     "yok (Slack kimliği ve e-posta), gönderimde dizinde bulunamazsa hiçbir şey gitmez")
+        self.assertEqual([a["durum"] for a in r["alicilar"]], ["simdi", "simdi", "kanal-yok", "alan-disi", "gonderen"])
+
+    def test_sessiz_saat_ve_ozet_zamani(self):
+        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", an="2026-11-05T19:30:00+03:00")
+        self.assertEqual(r["satir"], "sessiz saat (Per 19:30): Ali (Slack) yarın 08:30 özetinde")
+        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", an="2026-11-06T20:00:00+03:00")
+        self.assertIn("Pzt 08:30 özetinde", r["satir"])
+        r = self.plan("--tip", "BILGI", "--kimden", "ali", an="2026-11-05T07:00:00+03:00")
+        self.assertEqual((r["anlik"], r["satir"]), (False, "Ali (Slack) bugün 08:30 özetinde"))
+
+    def test_acil_karar_haber_olmadan_da_anlik_ve_sinir(self):
+        r = self.plan("--tip", "KARAR", "--kimden", "ali", "--son-tarih", "2026-11-06")
+        self.assertTrue(r["anlik"])
+        r = self.plan("--tip", "KARAR", "--kimden", "ali", "--son-tarih", "2026-11-20")
+        self.assertFalse(r["anlik"])
+        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", "--adet", "5")
+        self.assertIn("kişi başı günde en çok 3 anlık; kalan 2 girdi yarın 08:30 özetinde", r["satir"])
+
+    def test_tercih_issueden_okunur(self):
+        self.yorum(yorum("ayse-gh", "tercih: kisi=mert kanal=whatsapp"))
+        r = self.plan("--tip", "BILGI", "--kimden", "mert", "--haber", "hemen")
+        self.assertEqual(r["satir"], "şimdi anlık: Mert (mail) · WhatsApp henüz kapalı → mail")
+        self.assertEqual(r["alicilar"][0]["tercih"], "issue")
+        os.environ["FAKE_GH_YORUM_CIKIS"] = "1"
+        r = self.plan("--tip", "BILGI", "--kimden", "mert", "--haber", "hemen")
+        self.assertIn("Mert (Slack/mail)", r["satir"])
+        self.assertTrue(any("okunamadı" in n for n in r["notlar"]))
+
+    def test_bilinmeyen_kisi(self):
+        self.assertIn("kimse", self.stop("bildirim-plani", "--tip", "BILGI", "--kimden", "kimse", "--yazar", "ayse"))
 
 
 class CliTest(Base):

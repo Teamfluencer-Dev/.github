@@ -120,9 +120,11 @@ claude plugin marketplace add Teamfluencer-Dev/.github   # tf-review için yapt�
 claude plugin install tf-bilgi@teamfluencer
 ```
 
-Gerekenler: git, Python 3.9+, `gh auth login` ve GitHub hesabınızın KB deposuna
-**okuma-yazma** yetkisi (yönetim deposu ayrı yetkidir; yoksa org yöneticisinden
-isteyin). Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan yana
+Gerekenler: git, Python 3.9+, `gh auth login` ve GitHub hesabınızın KB deposuna okuma
+yetkisi. **Yazma** (`/paylas`, `/toplu-paylas`, `/bilgi alindi`) için depoya yazma yetkisi
+gerekir; 6 Kas 2026'dan beri bu yetki yalnız KB deposunun `.kb.json` `yazanlar` listesindeki
+kişilerde. Yetkisi olmayanda eklenti taslak hazırlamadan durur ve belgeyi kime ileteceğini
+söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan yana
 çalışır. Kurulum her yapılandırma klasörü (`CLAUDE_CONFIG_DIR`) için ayrı yapılır.
 
 ### Kullanım
@@ -131,12 +133,15 @@ isteyin). Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan 
 /paylas ekteki PDF yönetim için; Cuma'ya kadar fiyat kararı lazım ./abonelik.pdf
 /paylas geldiğim nokta: ödeme ekranı bitti, test bekliyor
 /paylas api#1976 web#689 merge sırası devri
+/paylas Abdullah ve Oğuz'dan Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
 /bilgi konu K-0003
 /bilgi ara abonelik
 /bilgi alindi B-20261105-ayse-01 Cuma'ya bakıyorum
+/bilgi tercih                # bildirim kanalın ve çözülüp çözülmediği
+/bilgi tercih slack,mail     # tercihini "Bildirim tercihleri" issue'suna yazar
 ```
 
 `/paylas` konuyu eşleştirir (`kb.py eslestir`), içeriği ve ekleri sır/KVKK için tarar
@@ -148,6 +153,15 @@ kuyruklar kütüphanecinindir, eklenti onlara dokunmaz. Yönetim deposuna yalnı
 `--yonetim` ile ya da açıkça "yönetim için" denince yazılır; içerik tek başına alanı
 belirlemez. `pr-listesi` türünde tablo `gh` ile (yalnız okuma) PR'ların
 `claude-review` ve merge durumundan kurulur.
+
+İstek bir ya da birden çok kişiye yöneltilir (`kimden: abdullah` ya da
+`kimden: [abdullah, oguz]`); alındı kişi başınadır. "Hemen haber ver" denirse girdiye
+`haber: hemen` yazılır ve push'ta her alıcıya anlık mesaj gider (hafta içi 08:30–19:00,
+kişi başı günde en çok 3; dışında 08:30 özetinde). Kartın `bildirim` satırı kime şimdi,
+kime özette, hangi kanaldan gideceğini ve kime hiçbir şey gitmeyeceğini adıyla söyler
+(`tf_bilgi.py bildirim-plani`, yalnız okur). Kanal tercihi (Slack, mail, WhatsApp; bir ya
+da birden çok) KB ekip deposundaki "Bildirim tercihleri" issue'sunda `tercih: kanal=…`
+yorumuyla durur; `/bilgi tercih` okur ve yazar.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce

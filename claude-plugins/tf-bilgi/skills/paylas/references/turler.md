@@ -24,11 +24,13 @@ ilerleme bildirimi ise `durum`, kalıcı bilgi ise `analiz`/`arastirma`.
 
 ```
 **Sonuç:** <1–2 cümle>
-**Senden istenen:** <TIP — kişi> ya da "Yok, bilgi için"
+**Senden istenen:** <TIP — kişi ya da kişiler> ya da "Yok, bilgi için"
 **Son tarih:** <YYYY-MM-DD> ya da "—"
 ```
 
-Bu üç satır WhatsApp ya da Slack önizlemesinde tek başına anlaşılmalı.
+Bu üç satır WhatsApp ya da Slack önizlemesinde tek başına anlaşılmalı: anlık bildirim
+(Slack DM / mail) bu satırları alıcıya aynen gösterir. Birden çok alıcıda "Senden
+istenen" herkes için doğru olmalı ("Abdullah ve Oğuz: merge sırasını onaylayın").
 
 ## Uzunluk
 
@@ -58,7 +60,8 @@ karar çıkmazsa ne olur. C-level'a gidiyorsa `dogrulayan` sorulur.
 3. Şu anki durum ve son girdiden beri ne değişti.
 4. Dikkat ve "olursa ne yap".
 5. Bağlantılar: Jira, PR, ham dosya (ek yok).
-6. Alındı: "Aldığını `/bilgi alindi <id>` ile ya da tek satırla bildir."
+6. Alındı: "Aldığını `/bilgi alindi <id>` ile ya da tek satırla bildir." Birden çok
+   alıcıda alındı kişi başınadır: istek, her alıcı alındı deyince kapanır.
 
 Alt şablonu kitleye göre seç: depoda `sablonlar/devir-cs-degisiklik-brifi.md` ve
 `sablonlar/devir-hesap-devri.md` olarak durur; `kb taslak --tur devir --sablon

@@ -7,8 +7,11 @@ This script keeps a local cache clone of each and drives the repo's own
 validation, commit/push). The plugin depends only on the kb.py commands, flags
 and JSON shapes of the TF Bilgi contract (sections 9 and 11), never on its code.
 
-  hazirla [--yonetim]            Clone or update the cache clone, resolve the
-                                 person, print JSON (kok, alan, kisi, kb, uzak, ...).
+  hazirla [--yonetim] [--yazma]  Clone or update the cache clone, resolve the
+                                 person, print JSON (kok, alan, kisi, kb, uzak,
+                                 yazabilir, ...). --yazma (/paylas, /toplu-paylas,
+                                 /bilgi alindi): stop if GitHub says the user cannot
+                                 push to the KB repo (only Enes and Ilgım can).
   kb [--yonetim] <args...>       Run the cache's kb.py; stdout, stderr and exit
                                  code pass through. kaydet/yenile/ozet are refused.
                                  toplu-hazirla (/toplu-paylas) needs absolute
@@ -27,6 +30,16 @@ and JSON shapes of the TF Bilgi contract (sections 9 and 11), never on its code.
                                  ham/DEFTER.tsv), then kb.py kaydet; prints links.
   prler [REF...] [--repo R]...   Read-only PR rows for a pr-listesi entry:
                                  claude-review state, merge state, stacking.
+  bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D]
+                 [--haber hemen|gunluk] [--adet N]
+                                 Read-only: who gets an instant notification now
+                                 and who only the 08:30 digest, on which channel,
+                                 and who gets nothing (one Turkish line for the card).
+  tercih [--kanal slack,mail,whatsapp] [--kisi K]
+                                 Notification channel preference: read it from the
+                                 "Bildirim tercihleri" issue, or post one
+                                 `tercih: kanal=...` comment there (gh issue comment;
+                                 read access is enough, no push).
 
 No model calls and no API keys: only git, the GitHub CLI and kb.py. Python 3.9+,
 stdlib only. Messages for the user are Turkish; exit code 2 means "show this
@@ -110,6 +123,14 @@ REMOTE_MANIFEST = (
     "https://raw.githubusercontent.com/Teamfluencer-Dev/.github/main/"
     "claude-plugins/tf-bilgi/.claude-plugin/plugin.json"
 )
+KANALLAR = ("slack", "mail", "whatsapp")
+ISTEK_TIPLERI = ("EYLEM", "KARAR", "INCELE", "BILGI")
+ACIL_TIPLER = ("EYLEM", "KARAR")
+# KB deposundaki araclar/bildir.py ile aynı kurallar (sözleşme §10): tercih satırı, sessiz saat, günlük sınır.
+TERCIH_RE = re.compile(r"^tercih:\s*(?:kisi=([a-z][a-z0-9]*)\s+)?kanal=([a-z]+(?:\s*,\s*[a-z]+)*)\s*$")
+SESSIZ_BAS, SESSIZ_BIT = (19, 0), (8, 30)
+ANLIK_GUNLUK_SINIR, ANLIK_GUN_ESIGI = 3, 2
+GUN_KISA = ("Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz")
 which = shutil.which  # module-level so tests can replace it
 
 
@@ -402,10 +423,52 @@ def guncelle(kok, deger, github, notlar):
     return "guncellendi" if once != sonra else "guncel"
 
 
+def ilk_ad(kisiler, anahtar):
+    return (str((kisiler.get(anahtar) or {}).get("ad") or anahtar).split() or [anahtar])[0]
+
+
+def yonelme(ad):
+    """Türkçe yönelme hâli: Enes → Enes'e, Ilgım → Ilgım'a, Ayşe → Ayşe'ye."""
+    unlu = "aeıioöuüAEIİOÖUÜ"
+    son = next((c for c in reversed(ad) if c in unlu), "e")
+    return ad + "'" + ("y" if ad[-1:] and ad[-1] in unlu else "") + ("a" if son in "aıouAIOU" else "e")
+
+
+def adlari_bagla(adlar):
+    return adlar[0] if len(adlar) == 1 else ", ".join(adlar[:-1]) + " ve " + adlar[-1]
+
+
+def yazma_yetkisi(deger, github):
+    """GitHub'a göre push yetkisi: True/False; None = denetlenemedi ya da GitHub dışı (yerel) uzak."""
+    if not github or not which("gh"):
+        return None
+    proc = sh(["gh", "api", f"repos/{deger}", "--jq", ".permissions.push"], check=False, timeout=30)
+    deger = proc.stdout.strip().lower() if proc.returncode == 0 else ""
+    return {"true": True, "false": False}.get(deger)
+
+
+def yetkisiz_mesaj(kok, ayar, uzak):
+    """Yazma yetkisi olmayana: kimin yazabildiği (.kb.json yazanlar, adlar kisiler.json'dan) ve ne yapacağı."""
+    kisiler = kisileri_oku(kok)
+    yazanlar = [k for k in (ayar.get("yazanlar") or []) if isinstance(k, str) and k in kisiler]
+    login = gh_login()
+    hesap = f"GitHub hesabının ({login}) " if login else "GitHub hesabının "
+    okuma = "Okuma çalışmaya devam eder: /bilgi kuyrugum, /bilgi son, /bilgi konu, /bilgi ara."
+    if yazanlar:
+        adlar = [ilk_ad(kisiler, k) for k in yazanlar]
+        return (f"Bu depoya yalnız {adlari_bagla(adlar)} yazabiliyor; paylaşmak istediğini {yonelme(adlar[0])} ilet "
+                f"(belgeyi ya da bağlantısını gönder; 'alındı' için “alındı <girdi-id>” yaz), o kaydeder. {hesap}"
+                f"{uzak} deposunda yazma yetkisi yok. {okuma}")
+    return (f"{hesap}{uzak} deposunda yazma yetkisi yok; paylaşmak istediğini depoya yazabilen birine ilet. {okuma}")
+
+
 def hazirla(argv):
     parser = argparse.ArgumentParser(prog="tf_bilgi.py hazirla")
     parser.add_argument("--yonetim", action="store_true")
-    alan = alan_sec(parser.parse_args(argv).yonetim)
+    parser.add_argument("--yazma", action="store_true",
+                        help="yazacak iş (/paylas, /toplu-paylas, /bilgi alindi): yazma yetkisi yoksa dur")
+    args = parser.parse_args(argv)
+    alan = alan_sec(args.yonetim)
     deger, github = uzak_kaynagi(alan)
     on_kontrol(github)
     notlar = [n for n in (surum_notu(github),) if n]
@@ -417,6 +480,12 @@ def hazirla(argv):
         islem = "klonlandi"
     ayar = depo_ayari(kok, alan)
     kb = kb_yolu(kok)
+    yazabilir = yazma_yetkisi(deger, github)
+    if args.yazma and yazabilir is False:
+        raise Stop(yetkisiz_mesaj(kok, ayar, uzak_slug(ayar, alan)))
+    if args.yazma and github and yazabilir is None:
+        notlar.append("Yazma yetkin denetlenemedi (gh api yanıt vermedi); kayıtta GitHub reddederse paylaşmak "
+                      "istediğini depoya yazabilen birine ilet.")
     kisi, kaynak = kisi_bul(kok, notlar)
     kisiler = kisileri_oku(kok)
     uzak = uzak_slug(ayar, alan)
@@ -427,7 +496,7 @@ def hazirla(argv):
         notlar.append(f"kisiler.json'da '{kisi}' bu alana ({alan}) kayıtlı değil; okuma kuyruğunuz burada üretilmez.")
     gun = bugun()
     sonuc = {
-        "kok": str(kok), "alan": alan, "kisi": kisi, "kb": str(kb), "uzak": uzak,
+        "kok": str(kok), "alan": alan, "kisi": kisi, "kb": str(kb), "uzak": uzak, "yazabilir": yazabilir,
         "damga": damga(),
         "kisi_kaynagi": kaynak,
         "baglanti_koku": f"https://github.com/{uzak}/blob/{DAL}/",
@@ -684,6 +753,8 @@ def kaydet(argv):
     args = parser.parse_args(argv)
     kok = mevcut_kok(alan)
     ayar = depo_ayari(kok, alan)
+    if yazma_yetkisi(*uzak_kaynagi(alan)) is False:
+        raise Stop(yetkisiz_mesaj(kok, ayar, uzak_slug(ayar, alan)))
     yollar = list(dict.fromkeys(goreli(kok, y) for y in args.yollar))
     sorunlar = []
     for yol in yollar:
@@ -829,10 +900,252 @@ def prler(argv):
     return {"satirlar": satirlar, "hatalar": hatalar}
 
 
-KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "yaz": yaz, "kaydet": kaydet, "prler": prler}
-KULLANIM = ("kullanım: tf_bilgi.py hazirla [--yonetim] | kb [--yonetim] <komut> ... | gecici AD | "
+# --- notification preferences and plan (read-only except `tercih --kanal`) ---
+
+def tercih_coz(yorumlar, kisiler, yoneticiler):
+    """Issue yorumları → ({kisi: {kanallar, kaynak}}, uyarılar). bildir.py tercihleri_coz ile aynı kurallar: yazarı
+    kisiler.json `github` hesabı olan, düzenlenmemiş yorum; en son kazanır; başkası adına yalnız yöneticiler."""
+    gh_kisi = {str(v.get("github")).lower(): k for k, v in kisiler.items() if isinstance(v, dict) and v.get("github")}
+    sonuc, uyarilar = {}, []
+    for y in sorted(yorumlar, key=lambda y: (str(y.get("created_at") or ""), y.get("id") or 0)):
+        satirlar = [s.strip() for s in str(y.get("body") or "").splitlines() if s.strip().lower().startswith("tercih:")]
+        if not satirlar:
+            continue
+        login = str((y.get("user") or {}).get("login") or "")
+        yer = f"yorum {y.get('id')} ({login or '?'})"
+        if y.get("updated_at") and y.get("created_at") and y["updated_at"] != y["created_at"]:
+            uyarilar.append(f"{yer} düzenlenmiş; sayılmaz")
+            continue
+        yazar = gh_kisi.get(login.lower())
+        if not yazar:
+            uyarilar.append(f"{yer} kisiler.json'daki bir GitHub hesabından değil; sayılmaz")
+            continue
+        for satir in satirlar:
+            m = TERCIH_RE.match(satir.lower())
+            kanallar = list(dict.fromkeys(k.strip() for k in m.group(2).split(","))) if m else []
+            if not m or any(k not in KANALLAR for k in kanallar):
+                uyarilar.append(f"{yer} bozuk satır; sayılmaz")
+                continue
+            hedef = m.group(1) or yazar
+            if hedef != yazar and yazar not in yoneticiler:
+                uyarilar.append(f"{yer} başkası ({hedef}) adına; yalnız tercih yöneticileri yazabilir")
+                continue
+            if hedef not in kisiler:
+                uyarilar.append(f"{yer} kişi kisiler.json'da yok ({hedef})")
+                continue
+            sonuc[hedef] = {"kanallar": kanallar, "kaynak": f"yorum {str(y.get('created_at') or '')[:10]} · {login}"}
+    return sonuc, uyarilar
+
+
+def tercih_yeri(ayar, alan):
+    no = ayar.get("tercih_issue")
+    return (no if isinstance(no, int) and not isinstance(no, bool) and no > 0 else None,
+            ayar.get("tercih_deposu") or uzak_slug(ayar, alan))
+
+
+def issue_yorumlari(repo, no):
+    proc = sh(["gh", "api", "--paginate", f"repos/{repo}/issues/{no}/comments?per_page=100", "--jq", ".[]"],
+              check=False, timeout=60)
+    if proc.returncode != 0:
+        raise Stop(f"Bildirim tercihleri okunamadı ({repo} issue #{no}). {ERISIM_IPUCU}\nAyrıntı: {ayrinti(proc)}")
+    return [json.loads(satir) for satir in proc.stdout.splitlines() if satir.strip()]
+
+
+def tercihleri_getir(kok, ayar, alan, notlar):
+    no, repo = tercih_yeri(ayar, alan)
+    if not no:
+        notlar.append("Bildirim tercihleri issue'su henüz yok: herkes varsayılanla (Slack, yoksa mail) alır.")
+        return {}
+    if not which("gh"):
+        notlar.append("gh yok: bildirim tercihleri okunamadı, varsayılan (Slack, yoksa mail) gösterildi.")
+        return {}
+    try:
+        sonuc, _ = tercih_coz(issue_yorumlari(repo, no), kisileri_oku(kok), set(ayar.get("tercih_yoneticileri") or []))
+    except Stop:
+        notlar.append(f"Bildirim tercihleri okunamadı ({repo} issue #{no}); varsayılan (Slack, yoksa mail) gösterildi.")
+        return {}
+    return sonuc
+
+
+def simdi():
+    sabit = os.environ.get("TF_BILGI_SIMDI")  # tests pin the moment
+    if sabit:
+        return datetime.datetime.fromisoformat(sabit)
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.datetime.now(ZoneInfo("Europe/Istanbul"))
+    except Exception:
+        return datetime.datetime.now()
+
+
+def sessiz_mi(an):
+    return an.weekday() >= 5 or (an.hour, an.minute) >= SESSIZ_BAS or (an.hour, an.minute) < SESSIZ_BIT
+
+
+def ozet_zamani(an):
+    """Bir sonraki 08:30 günlük özetinin adı: 'bugün 08:30', 'yarın 08:30' ya da 'Pzt 08:30'."""
+    gun = an.date()
+    if gun.weekday() < 5 and (an.hour, an.minute) < SESSIZ_BIT:
+        return "bugün 08:30"
+    gun += datetime.timedelta(days=1)
+    while gun.weekday() >= 5:
+        gun += datetime.timedelta(days=1)
+    return "yarın 08:30" if gun == an.date() + datetime.timedelta(days=1) else f"{GUN_KISA[gun.weekday()]} 08:30"
+
+
+def kanal_etiketi(bilgi, kanallar):
+    """kisiler.json'a göre beklenen kanallar ("Slack+mail" …) ve notlar. Gönderimde Slack/Workspace araması daha
+    fazlasını bulabilir; burada yalnız depoda kayıtlı olana bakılır."""
+    etiketler, notlar = [], []
+    for k in kanallar:
+        if k == "slack":
+            e = "Slack" if bilgi.get("slack") else ("Slack/mail" if bilgi.get("eposta") else None)
+        elif k == "mail":
+            e = "mail" if bilgi.get("eposta") else None
+        else:
+            e = "mail" if bilgi.get("eposta") else None
+            notlar.append("WhatsApp henüz kapalı → mail")
+        if e and e not in etiketler:
+            etiketler.append(e)
+    return "+".join(etiketler), notlar
+
+
+def bildirim_plani(argv):
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py bildirim-plani")
+    parser.add_argument("--yonetim", action="store_true")
+    parser.add_argument("--tip", required=True, choices=ISTEK_TIPLERI)
+    parser.add_argument("--kimden", required=True, help="kişi anahtarları, virgülle")
+    parser.add_argument("--yazar", required=True)
+    parser.add_argument("--son-tarih", dest="son_tarih")
+    parser.add_argument("--haber", choices=("hemen", "gunluk"), default="gunluk")
+    parser.add_argument("--adet", type=int, default=1, help="aynı alıcılara giden girdi sayısı (toplu paylaşım)")
+    args = parser.parse_args(argv)
+    alan = alan_sec(args.yonetim)
+    kok = mevcut_kok(alan)
+    ayar = depo_ayari(kok, alan)
+    kisiler = kisileri_oku(kok)
+    alicilar = list(dict.fromkeys(k.strip() for k in args.kimden.split(",") if k.strip()))
+    bilinmeyen = [k for k in alicilar + [args.yazar] if k not in kisiler]
+    if not alicilar or bilinmeyen:
+        raise Stop(f"Kişi anahtarı kisiler.json'da yok: {', '.join(bilinmeyen) or '(boş)'}")
+    son = datetime.date.fromisoformat(args.son_tarih) if args.son_tarih else None
+    an = simdi()
+    sessiz = sessiz_mi(an)
+    acil = args.tip in ACIL_TIPLER and son is not None and (son - an.date()).days <= ANLIK_GUN_ESIGI
+    anlik = args.haber == "hemen" or acil
+    zaman = ozet_zamani(an)
+    notlar = []
+    tercihler = tercihleri_getir(kok, ayar, alan, notlar)
+    kisi_satirlari, gidecek, yok, parcalar, ek_notlar = [], [], [], [], []
+    for k in alicilar:
+        bilgi, ad = kisiler[k], ilk_ad(kisiler, k)
+        t = tercihler.get(k)
+        kanallar = t["kanallar"] if t else ["slack"]
+        if k == args.yazar:
+            durum, etiket = "gonderen", ""
+            parcalar.append("sen (gönderen) bildirim almazsın")
+        elif alan not in (bilgi.get("alanlar") or []):
+            durum, etiket = "alan-disi", ""
+            parcalar.append(f"{yonelme(ad)} bildirim gitmez ({alan} alanının üyesi değil)")
+        else:
+            etiket, kn = kanal_etiketi(bilgi, kanallar)
+            ek_notlar += [n for n in kn if n not in ek_notlar]
+            if etiket:
+                durum = "simdi" if anlik and not sessiz else "ozet"
+                gidecek.append(f"{ad} ({etiket})")
+            else:
+                durum = "kanal-yok"
+                yok.append(ad)
+        kisi_satirlari.append({"kisi": k, "ad": ad, "kanallar": kanallar, "tercih": "issue" if t else "varsayilan",
+                               "etiket": etiket, "durum": durum})
+    if gidecek:
+        adlar = ", ".join(gidecek)
+        if anlik and not sessiz:
+            parcalar.insert(0, f"şimdi anlık: {adlar}")
+        elif anlik:
+            parcalar.insert(0, f"sessiz saat ({GUN_KISA[an.weekday()]} {an:%H:%M}): {adlar} {zaman} özetinde")
+        else:
+            parcalar.insert(0, f"{adlar} {zaman} özetinde")
+    for ad in yok:
+        parcalar.append(f"{ad}: kayıtlı kanal yok (Slack kimliği ve e-posta), gönderimde dizinde bulunamazsa "
+                        "hiçbir şey gitmez")
+    if anlik and not sessiz and args.adet > ANLIK_GUNLUK_SINIR:
+        parcalar.append(f"kişi başı günde en çok {ANLIK_GUNLUK_SINIR} anlık; kalan {args.adet - ANLIK_GUNLUK_SINIR} "
+                        f"girdi {zaman} özetinde")
+    parcalar += ek_notlar
+    return {"anlik": anlik, "sessiz": sessiz, "saat": f"{an:%H:%M}", "ozet_zamani": zaman,
+            "alicilar": kisi_satirlari, "satir": " · ".join(parcalar), "notlar": notlar}
+
+
+def kanal_cozumu(bilgi):
+    """/bilgi tercih: depoda kayıtlı olana göre her kanalın çözülüp çözülmediği."""
+    slack = ("Slack kimliği kayıtlı" if bilgi.get("slack") else
+             "Slack kimliği kayıtlı değil: gönderimde e-postadan aranır, bulunamazsa mail" if bilgi.get("eposta") else
+             "Slack kimliği ve e-posta kayıtlı değil: gönderimde Workspace dizininden aranır")
+    mail = ("e-posta kayıtlı" if bilgi.get("eposta") else
+            "e-posta kayıtlı değil: gönderimde Slack profilinden ya da Workspace dizininden aranır")
+    whatsapp = ("henüz kapalı (hat ve sağlayıcı kararı bekliyor): o süre mail gider; telefon depoda tutulmaz, "
+                "gönderimde Slack profilinden ya da Workspace dizininden okunur")
+    return {"slack": slack, "mail": mail, "whatsapp": whatsapp}
+
+
+def tercih(argv):
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py tercih")
+    parser.add_argument("--kanal", help="slack, mail, whatsapp; virgülle birden çok")
+    parser.add_argument("--kisi", help="başkası adına (yalnız tercih yöneticileri)")
+    args = parser.parse_args(argv)
+    kok = mevcut_kok("ekip")  # tercihler ekip deposundaki issue'da durur (iki alan için tek tercih)
+    ayar = depo_ayari(kok, "ekip")
+    kisiler = kisileri_oku(kok)
+    yoneticiler = [k for k in (ayar.get("tercih_yoneticileri") or []) if isinstance(k, str)]
+    no, repo = tercih_yeri(ayar, "ekip")
+    if not no:
+        kim = next((ilk_ad(kisiler, k) for k in yoneticiler + list(ayar.get("yazanlar") or []) if k in kisiler), None)
+        raise Stop("Bildirim tercihleri issue'su henüz açılmamış (.kb.json tercih_issue boş). "
+                   + (f"{yonelme(kim)} söyle: issue'yu o açıp numarasını .kb.json'a yazacak." if kim else
+                      "Depo yöneticisine söyle: issue'yu açıp numarasını .kb.json'a yazacak."))
+    ben = kendi_kisin(kok)
+    hedef = args.kisi or ben
+    if hedef not in kisiler:
+        raise Stop(f"Kişi anahtarı kisiler.json'da yok: {hedef}")
+    issue_url = f"https://github.com/{repo}/issues/{no}"
+    if args.kanal is None:
+        sonuc, uyarilar = tercih_coz(issue_yorumlari(repo, no), kisiler, set(yoneticiler))
+        t = sonuc.get(hedef)
+        return {"kisi": hedef, "kanallar": t["kanallar"] if t else ["slack"], "varsayilan": t is None,
+                "kaynak": t["kaynak"] if t else "tercih yok: varsayılan Slack, Slack kimliği çözülemezse mail",
+                "cozum": kanal_cozumu(kisiler[hedef]), "issue": issue_url, "uyarilar": uyarilar}
+    kanallar = list(dict.fromkeys(k.strip().lower() for k in args.kanal.split(",") if k.strip()))
+    if not kanallar or any(k not in KANALLAR for k in kanallar):
+        raise Stop(f"Kanal anlaşılmadı: {args.kanal!r}. Seçenekler: slack, mail, whatsapp (virgülle birden çok).")
+    if hedef != ben and ben not in yoneticiler:
+        adlar = [ilk_ad(kisiler, k) for k in yoneticiler if k in kisiler]
+        raise Stop("Başkası adına tercih yalnız tercih yöneticileri yazar"
+                   + (f" ({adlari_bagla(adlar)})" if adlar else "") + f"; {ilk_ad(kisiler, hedef)} kendi tercihini "
+                   "`/bilgi tercih <kanal>` ile yazabilir.")
+    hesap, login = str(kisiler[ben].get("github") or ""), gh_login()
+    if not hesap:
+        raise Stop("kisiler.json'da GitHub kullanıcı adın yok, bu yüzden yorumun sayılmaz. Tercihini bir tercih "
+                   "yöneticisine söyle; senin adına yazar.")
+    if not login or login.lower() != hesap.lower():
+        raise Stop(f"GitHub girişin ({login or 'yok'}) kisiler.json'daki hesabınla ({hesap}) aynı değil; yorum sayılmaz. "
+                   "`gh auth login` ile doğru hesaba geç.")
+    satir = f"tercih: kanal={','.join(kanallar)}" if hedef == ben else f"tercih: kisi={hedef} kanal={','.join(kanallar)}"
+    proc = sh(["gh", "issue", "comment", str(no), "-R", repo, "--body", satir], check=False, timeout=60)
+    if proc.returncode != 0:
+        raise Stop(f"Tercih yorumu yazılamadı ({repo} issue #{no}). {ERISIM_IPUCU}\nAyrıntı: {ayrinti(proc)}")
+    url = next((x for x in reversed(proc.stdout.split()) if x.startswith("https://")), issue_url)
+    return {"yazildi": True, "kisi": hedef, "kanallar": kanallar, "satir": satir, "url": url,
+            "cozum": kanal_cozumu(kisiler[hedef])}
+
+
+KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "yaz": yaz, "kaydet": kaydet, "prler": prler,
+            "bildirim-plani": bildirim_plani, "tercih": tercih}
+KULLANIM = ("kullanım: tf_bilgi.py hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
             "maskele [--yonetim] DOSYA | yaz [--yonetim] [--dosya F] [--uzerine] | "
-            "kaydet [--yonetim] --mesaj M YOL... | prler [REF...] [--repo R]")
+            "kaydet [--yonetim] --mesaj M YOL... | prler [REF...] [--repo R] | "
+            "bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D] [--haber hemen|gunluk] [--adet N] | "
+            "tercih [--kanal slack,mail,whatsapp] [--kisi K]")
 
 
 def main(argv=None):

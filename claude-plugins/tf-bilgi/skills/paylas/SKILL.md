@@ -1,7 +1,7 @@
 ---
 name: paylas
-description: "TF Bilgi'ye tek komutla paylaş: analiz, durum (geldiğim nokta), devir, PR listesi, karar notu, toplantı notu, nasıl-yapılır ya da araştırma. Konuyu eşleştirir, sır/KVKK taraması yapar, tek onay kartı gösterir; onaylanınca ekip (ya da --yonetim ile yönetim) bilgi deposuna commit'ler. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi."
-argument-hint: "<ne paylaşıyorsun, kime, ne lazım> [dosya yolları] [--yonetim]"
+description: "TF Bilgi'ye tek komutla paylaş: analiz, durum (geldiğim nokta), devir, PR listesi, karar notu, toplantı notu, nasıl-yapılır ya da araştırma; bir ya da birden çok kişiye, istenirse hemen bildirimle. Konuyu eşleştirir, sır/KVKK taraması yapar, tek onay kartı gösterir; onaylanınca ekip (ya da --yonetim ile yönetim) bilgi deposuna commit'ler. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi."
+argument-hint: "<ne paylaşıyorsun, kime (bir ya da birden çok kişi), ne lazım, 'hemen haber ver'> [dosya yolları] [--yonetim]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
   - Read(~/.tf-bilgi/**)
@@ -54,7 +54,10 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
    AskUserQuestion: "Ekip deposu" / "Yönetim deposu". Raw bank transactions and
    profit statements go into neither repo: stop and say only a summary can be shared.
 
-2. **Prepare.** `TFB hazirla [--yonetim]` (timeout 300000 ms). Keep from the JSON:
+2. **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay
+   the message as-is and stop **before reading or drafting anything**: only the people
+   in the repo's `yazanlar` (Enes and Ilgım, 6 Kas kararı) can push; the message tells
+   the user whom to hand the document to. Keep from the JSON:
    `kok`, `alan`, `kisi`, `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`.
    Relay each `notlar` entry as one short line. If `kisi` is null, ask once with
    AskUserQuestion "Kim olarak paylaşıyorsun?" (up to 4 entries of `kisiler`,
@@ -166,7 +169,8 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
    | `birim` | From the content: `dev · cs · satis · ops · yonetim · urun · genel` |
    | `proje` | A `projeler.json` key, else `genel` |
    | `hedef_kitle` | Who should read it: `c-level · dev · cs · satis · ops · herkes` and/or person keys |
-   | `istek` | `null` if FYI. Else `tip` (`EYLEM · KARAR · INCELE · BILGI`), `kimden` (the person the request is addressed to: "Ayşe'den karar lazım" → Ayşe's key), `son_tarih`. Required for `devir` and `karar` |
+   | `istek` | `null` if FYI. Else `tip` (`EYLEM · KARAR · INCELE · BILGI`), `kimden`, `son_tarih`. Required for `devir` and `karar`. See "Recipients and `haber`" below |
+   | `haber` | Only with an `istek`, only when the user asked for it: `haber: hemen` on its own line right after the `istek` block. Otherwise leave the field out (absent = `gunluk`) |
    | `son_tarih` | Absolute `YYYY-MM-DD`. Resolve weekday words only from `takvim` in the hazirla JSON ("Cuma" = first Cuma there); never count days yourself. Unclear → ask in Düzelt, or `null` |
    | `tldr` | ≤2 sentences that stand alone (first lines on a phone) |
    | `gecersiz_kildigi` | Step 5, else `[]` |
@@ -180,6 +184,28 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
 
    YAML: always double-quote `baslik`, `tldr` and any value containing `: ` or `#`;
    never put `"` inside a value (use « » or ’ instead).
+
+   **Recipients and `haber`.**
+   - `kimden` is whom the request is addressed to: "Ayşe'den karar lazım" → Ayşe's key.
+     Several people ("Abdullah ve Oğuz'dan", "Nil, Gizem ve Ece bilgi alsın", "kime:
+     abdullah, oguz") → all of them, in the order given, no duplicates. One person →
+     a plain key (`kimden: abdullah`); two or more → an inline list
+     (`kimden: [abdullah, oguz]`). Every name is mapped to a `kisiler.json` key as in
+     step 3; the author goes in only if the user explicitly includes themself.
+   - Yönetim area: every recipient must have `yonetim` in `kisiler[k].alanlar`. Drop
+     anyone else and say so in a `not` line (a yönetim entry is never announced to a
+     non-member).
+   - `haber: hemen` only when the user explicitly asks for an immediate notification:
+     "hemen haber ver", "hemen bildir", "acil haber", "hemen DM at", "şimdi haberleri
+     olsun". Never infer it from the content, from urgency words alone or from a near
+     deadline (EYLEM/KARAR with a deadline ≤ 2 days is instant anyway). "Hemen haber
+     ver" with named people but no request → `tip: BILGI` to those people. "Hemen haber
+     ver" without anyone named → ask once whom to notify.
+   - Then run `TFB bildirim-plani [--yonetim] --tip <TIP> --kimden <k1,k2> --yazar <kisi>
+     [--son-tarih <D>] [--haber hemen]` (read-only). Keep its `satir` for the card; it
+     names who gets an instant message now, who only the 08:30 digest, on which
+     channel (each person's preference from the "Bildirim tercihleri" issue), and who
+     gets nothing. Relay its `notlar` as a `not` line.
 
    Body: follow the template printed by `taslak` and `references/turler.md`. The
    first block is always the three BLUF lines `**Sonuç:**`, `**Senden istenen:**`,
@@ -197,13 +223,18 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
      başlık : "<baslik>"
      konu   : <K-0003 Abonelik ×3> (<proje>) — güven <yüksek|orta|düşük> (<sebep>)
      tür    : <tur> · kitle: <hedef_kitle, virgülle> · alan: <alan>
-     istek  : <TIP> → <kisi> · son tarih <YYYY-MM-DD | yok>
+     istek  : <TIP> → <kişi1, kişi2> · son tarih <YYYY-MM-DD | yok> · haber: <hemen | günlük>
+     bildirim: <satir from bildirim-plani>
      tldr   : "<tldr>"
      yerine geçtiği: <B-… (neden)> | —
      ham    : <ham yolu | yok (neden)> · sır/KVKK taraması: <temiz | N sır maskelendi | kişisel veri çıkarıldı | yanlış alarm onaylandı | taranamadı — görsel elle kontrol edildi>
    ```
 
-   - `istek` without a request: `istek  : yok (bilgi için)`.
+   - `istek` without a request: `istek  : yok (bilgi için)` and no `bildirim` line.
+   - Names on the card are first names from `kisiler.json` (`ad`), comma-separated.
+   - The `bildirim` line is shown as given; never promise more than it says (the
+     notification Action sends only when it is switched on in the repo, and while a
+     pilot is running — Actions variable `BILDIRIM_YALNIZ` — only to the pilot people).
    - `konu` variants: `ONERI: <başlık> (<proje>) — yeni konu önerisi, kütüphaneci açacak`;
      `AYIKLA — adaylar: K-…, K-… (kütüphaneci seçecek)`.
    - Extra lines only when relevant: `sağlık : <renk>` (durum),

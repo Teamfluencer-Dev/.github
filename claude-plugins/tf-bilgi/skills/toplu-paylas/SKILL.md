@@ -1,7 +1,7 @@
 ---
 name: toplu-paylas
 description: "TF Bilgi'ye toplu paylaş: bir klasör dolusu belge (ör. claude.ai'den indirilmiş artifact'ler: HTML sayfaları, PDF ekleri) ya da birden çok dosya. Her öğeyi ekip, yönetim ya da girmez diye sınıflar, sır/KVKK taraması yapar, tek onay tablosu gösterir; onaylanınca her alana tek commit atar. Use when the user runs /toplu-paylas or asks to share a whole folder or many files into TF Bilgi at once."
-argument-hint: "<klasör|dosyalar> [--yonetim-yok]"
+argument-hint: "<klasör|dosyalar> [kime: kişi1, kişi2] [hemen haber ver] [--yonetim-yok]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
   - Read(~/.tf-bilgi/**)
@@ -11,7 +11,9 @@ allowed-tools:
 # /toplu-paylas — TF Bilgi'ye toplu paylaş
 
 Arguments: `$ARGUMENTS` — one or more folder or file paths, optional `--yonetim-yok`
-(do not use the yönetim repo in this run; yönetim items then stay in staging).
+(do not use the yönetim repo in this run; yönetim items then stay in staging), and
+optional free text naming **recipients for the whole batch** ("Abdullah ve Oğuz'a",
+"kime: nil, gizem") and/or an explicit **"hemen haber ver"** (same words as `/paylas`).
 
 Many documents → one staging run → one approval table → one commit per area. The
 KB repo's `araclar/kb.py` owns every rule (discovery, text, scanning, matching,
@@ -61,14 +63,19 @@ before step 4 (subagents read it too).
 
 ## Steps
 
-1. **Paths.** Collect the paths from `$ARGUMENTS`; make each absolute (expand `~`).
-   None given → ask once which folder or files to share.
+1. **Paths and batch recipients.** Collect the paths from `$ARGUMENTS`; make each
+   absolute (expand `~`). None given → ask once which folder or files to share. The
+   rest of the text may name batch recipients and ask for `haber: hemen`; resolve the
+   names to `kisiler.json` keys after step 2 (as `/paylas` step 3 does) and keep them
+   as `alicilar` (ordered, no duplicates) and `haber`. "Hemen haber ver" with nobody
+   named → ask once whom to notify.
 
-2. **Prepare.** `TFB hazirla` (timeout 300000 ms). Keep `kok`, `kisi`, `uzak`,
+2. **Prepare.** `TFB hazirla --yazma` (timeout 300000 ms). Exit 2 → relay the message
+   as-is and stop before staging anything (only the repo's `yazanlar` can push). Keep `kok`, `kisi`, `uzak`,
    `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay `notlar` as one short
    line each. `kisi` null → ask as `/paylas` does (step 2 there). Read
    `<kok>/kisiler.json`: when `kisiler[kisi].alanlar` contains `yonetim` and
-   `--yonetim-yok` is absent, run `TFB hazirla --yonetim` and keep its `kok` as
+   `--yonetim-yok` is absent, run `TFB hazirla --yonetim --yazma` and keep its `kok` as
    `kok_y`. Exit 2 there → yönetim is unreachable for this run: say it in one line
    and go on. Otherwise yönetim is off for this run.
 
@@ -140,7 +147,11 @@ before step 4 (subagents read it too).
    - Attachments (`ust` set) sit right under their parent, prefixed `└`.
    - Yönetim off → header `Yönetim → yazılmayacak, hazırlıkta kalır (<n>)` plus the
      reason (erişim yok / üyeliğin yok / --yonetim-yok).
-   - Extra lines only when relevant: `İstekler: <no> <TIP> → <kisi> (<son_tarih|—>) · …`,
+   - With batch recipients: `Alıcılar (tüm öğeler): <adlar> · haber: <hemen | günlük>`, then
+     `Bildirim: <satir>` from `TFB bildirim-plani [--yonetim] --tip BILGI --kimden <alicilar>
+     --yazar <kisi> [--haber hemen] --adet <number of items of that area>` (one line per
+     area that has items; read-only).
+   - Extra lines only when relevant: `İstekler: <no> <TIP> → <kişi1, kişi2> (<son_tarih|—>) · …`,
      `Yerine geçme: <no> → <onceki_surum no>`, `Doğrulayan boş: <no>, … (c-level'a giden
      karar/analiz)`, `Notlar: <no> <not>` (talimat benzeri metin, düşük güvenli konu …).
    - Empty groups are left out.
@@ -174,7 +185,9 @@ before step 4 (subagents read it too).
       | Field | Value |
       |---|---|
       | `id` | Step 6.1 |
-      | `baslik`, `tur`, `konu`, `aday_konular`, `proje`, `birim`, `hedef_kitle`, `istek`, `tldr`, `saglik`, `uretim`, `okuma_suresi_dk`, `baglantilar` | `oge.json` (all six `baglantilar` keys) |
+      | `baslik`, `tur`, `konu`, `aday_konular`, `proje`, `birim`, `hedef_kitle`, `istek`, `tldr`, `saglik`, `uretim`, `okuma_suresi_dk`, `baglantilar` | `oge.json` (all six `baglantilar` keys), then batch recipients below |
+      | `istek` with batch recipients | No `istek` in `oge.json` → `{tip: BILGI, kimden: <alicilar>, son_tarih: null}`. An `istek` there → keep `tip` and `son_tarih`, `kimden` = its recipients followed by the batch ones (no duplicates). One person → plain key, two or more → inline list. Yönetim items: only recipients with `yonetim` in `alanlar` (say who was dropped) |
+      | `haber` | `hemen` (own line right after `istek`) only when the user asked for it and the item has an `istek`; otherwise leave the field out |
       | `tarih` | `oge.json` `belge_tarihi` |
       | `gecersiz_kildigi` | `[<id of onceki_surum>]` if that item is written in this area in this run, else `[]` |
       | `ham` | Step 6.2 `yol`, or `null` |

@@ -121,7 +121,7 @@ Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
 | `proje` | `projeler.json` anahtarı ya da `genel` |
 | `birim` | `dev · cs · satis · ops · yonetim · urun · genel` listesi |
 | `hedef_kitle` | En az bir: `c-level · dev · cs · satis · ops · herkes` ve/veya kişi anahtarları |
-| `istek` | `null` ya da `{"tip": "KARAR", "kimden": "<kisi>", "son_tarih": "YYYY-MM-DD" ya da null}` |
+| `istek` | `null` ya da `{"tip": "KARAR", "kimden": "<kisi>", "son_tarih": "YYYY-MM-DD" ya da null}`; belge birden çok kişiden istiyorsa `"kimden": ["<kisi>", "<kisi>"]`. `haber` yazılmaz (yalnız kullanıcı ister; toplu alıcıları ana oturum ekler) |
 | `saglik` | `durum`'da renk; değilse `null` |
 | `belge_tarihi` | Belgenin kendi tarihi; yoksa manifest `tarih_ipucu`; o da yoksa bugün |
 | `baglantilar` | `{"jira": [], "pr": [], "hatirlatma": [], "cl": [], "pano": null, "karar": null}`; belgenin konusu olan kimliklerle (`pr`: `"api#1976"` biçimi) |
