@@ -1,8 +1,8 @@
 # Türler ve gövde kuralları (/paylas)
 
 `kb taslak` çıktısındaki gövde (deponun `sablonlar/<tur>.md` dosyası) esastır. Bu
-dosya yalnız tür seçimini, uzunlukları ve şablonda olmayan devir alt şablonlarını
-anlatır. Şablon ile bu dosya çelişirse şablon kazanır.
+dosya yalnız tür seçimini, uzunlukları ve devir alt şablonlarının ne zaman
+seçileceğini anlatır. Şablon ile bu dosya çelişirse şablon kazanır.
 
 ## Tür seçimi (8 değer)
 
@@ -60,7 +60,10 @@ karar çıkmazsa ne olur. C-level'a gidiyorsa `dogrulayan` sorulur.
 5. Bağlantılar: Jira, PR, ham dosya (ek yok).
 6. Alındı: "Aldığını `/bilgi alindi <id>` ile ya da tek satırla bildir."
 
-Alt şablonu kitleye göre seç ve iskeletin 3–4. maddelerinin yerine koy:
+Alt şablonu kitleye göre seç: depoda `sablonlar/devir-cs-degisiklik-brifi.md` ve
+`sablonlar/devir-hesap-devri.md` olarak durur; `kb taslak --tur devir --sablon
+devir-cs-degisiklik-brifi` (ya da `devir-hesap-devri`) onu basar. Aşağıdaki
+listeler o şablonların özetidir; iskeletin 3–4. maddelerinin yerine geçer:
 
 ### `cs-degisiklik-brifi` (ürün → CS/ops)
 

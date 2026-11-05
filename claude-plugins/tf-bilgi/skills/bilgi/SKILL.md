@@ -57,8 +57,8 @@ them. This skill writes nothing except an `alindi` record.
    - **kuyrugum** — sections in this order, empty ones left out, at most 5 lines
      each plus "+N daha": "Senden beklenen — 48 saat içinde" (`acil`), "Senden
      beklenen" (`bekleyen`), "Sana yeni" (`yeni`), "Kontrol et: son dosyalamalar"
-     (`kontrol`), "Süresi geçmiş" (`suresi_gecmis`), "Alındı gelmedi"
-     (`alindi_gelmedi`). Each package as one card line: `<kisi> · <girdi_sayisi>
+     (`kontrol`; append ` — <kontrol_nedeni>` to each line), "Süresi geçmiş"
+     (`suresi_gecmis`), "Alındı gelmedi" (`alindi_gelmedi`). Each package as one card line: `<kisi> · <girdi_sayisi>
      belge · <konu_sayisi> konu · ~<toplam_okuma_dk> dk · önce: <onerilen_sira>`,
      with its `uyarilar` under it. End with "Toplam okuma: ~<toplam_okuma_dk> dk".
      All empty → "Kuyruğun boş."
