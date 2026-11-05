@@ -127,7 +127,12 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
      naming kind, count and place but never the value. Options: "Çıkar
      (önerilen)" — leave it out of the body, and a raw file containing it is not
      attached (`ham: null`, `ham_notu: "kişisel veri içerdiği için depoya
-     alınmadı"`); "Yanlış alarm, böyle kalsın"; "Vazgeç" — stop, nothing written.
+     alınmadı"`); "Yanlış alarm, böyle kalsın" — ask in the same question for a one-line
+     reason, then for each finding `ad` in that raw file run (after Onayla, step 10.1)
+     `TFB kb izin-ekle <file> --kategori <ad> --kisi <kisi> --gerekce '<reason>'`; this adds a
+     line to `ham/IZINLER.tsv` for that exact file (sha256) only, in the user's own name, and
+     `kb dogrula` then reports the finding as a warning instead of an error. A finding in the
+     entry text itself cannot be waived: reword it. "Vazgeç" — stop, nothing written.
 
 7. **Draft.**
    - Dates. **Paylaşım tarihi** (goes into the id and the `girdiler/YYYY/MM/`
@@ -228,7 +233,7 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
        files are waiting in the cache and stop; if `ham/DEFTER.tsv` was changed,
        add that the next `/paylas` will ask them to `git -C "<kok>" stash` it first.
        Warnings → one line in the reply.
-    4. `TFB kaydet --mesaj '<id>: <baslik>' <yol> [each new ham yol] [ham/DEFTER.tsv when any ham-ekle returned "yeni"]`.
+    4. `TFB kaydet --mesaj '<id>: <baslik>' <yol> [each new ham yol] [ham/DEFTER.tsv when any ham-ekle returned "yeni"] [ham/IZINLER.tsv when izin-ekle returned "yeni"]`.
     5. Reply with exactly two lines (plus one line for warnings or `notlar`, if any):
        ```
        Kaydedildi: <id> → <konu> (<tf-bilgi | tf-bilgi-yonetim>)

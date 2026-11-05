@@ -436,6 +436,22 @@ class KbGecisTest(Base):
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(out)["komut"], ["--json", "son", "--gun", "3"])
 
+    def test_repeated_options_are_refused(self):
+        self.ok("hazirla")
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        for argv in (("alindi", "B-20261029-ayse-01", "--kisi", "ayse", "--kisi", "mert"),
+                     ("alindi", "B-20261029-ayse-01", "--kisi", "ayse", "--ki=mert"),
+                     ("son", "--gun", "3", "--gun", "9")):
+            self.assertIn("iki kez", self.stop("kb", *argv), argv)
+
+    def test_izin_ekle_only_for_resolved_person(self):
+        self.ok("hazirla")
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        self.assertIn("kendi adınıza", self.stop("kb", "izin-ekle", "x.pdf", "--kategori", "telefon", "--kisi", "mert",
+                                                 "--gerekce", "kurum santrali"))
+        code, out, _ = self.cli("kb", "izin-ekle", "x.pdf", "--kategori", "telefon", "--kisi", "ayse", "--gerekce", "santral")
+        self.assertEqual(code, 0, out)
+
     def test_alindi_only_for_resolved_person(self):
         self.ok("hazirla")
         self.assertIn("Kim olduğunuz bulunamadı", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert"))
@@ -553,6 +569,19 @@ class KaydetTest(Base):
         result = self.ok("kaydet", "--mesaj", "alindi: B-20261029-ayse-01 (mert)", onay)
         self.assertTrue(self.published(onay))
         self.assertEqual(result["baglantilar"][0]["yol"], onay)
+
+    def test_izinler_append_only_and_own_name(self):
+        izin = self.kok() / "ham" / "IZINLER.tsv"
+        bas = "sha256\tkategori\tonaylayan\ttarih\tgerekce\n"
+        sha = "a" * 64
+        izin.write_text(bas + f"{sha}\ttelefon\tmert\t2026-11-05\tsantral numarası\n", encoding="utf-8")
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        self.assertIn("kendi adınıza", self.stop("kaydet", "--mesaj", "izin", "ham/IZINLER.tsv"))
+        izin.write_text(bas + f"{sha}\ttelefon\tayse\t2026-11-05\tsantral numarası\n", encoding="utf-8")
+        self.ok("kaydet", "--mesaj", "izin", "ham/IZINLER.tsv")
+        self.assertTrue(self.published("ham/IZINLER.tsv"))
+        izin.write_text(bas, encoding="utf-8")  # satır silmek yok
+        self.assertIn("yalnız satır eklenebilir", self.stop("kaydet", "--mesaj", "izin", "ham/IZINLER.tsv"))
 
     def test_reports_unpushed_commit(self):
         os.environ["STUB_KB_PUSH_YOK"] = "1"

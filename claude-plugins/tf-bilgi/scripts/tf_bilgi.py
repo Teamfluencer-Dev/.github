@@ -61,9 +61,12 @@ YENI_YOLLAR = (
 )
 ONAY_RE = re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}--([a-z][a-z0-9]*)\.md$")
 DEFTER = "ham/DEFTER.tsv"
+IZINLER = "ham/IZINLER.tsv"  # insanın onayladığı yanlış alarmlar: yalnız satır eklenir, onaylayan = sen
 # Sözleşme §10: /paylas ve /bilgi oturumunun kb.py'de çalıştırabildiği alt komutlar (yazanlar yalnız
 # ham-ekle ve alindi; commit'i her zaman `tf_bilgi.py kaydet` yapar).
-KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "son", "konu", "ara", "kuyruk", "alindi")
+KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "son", "konu", "ara", "kuyruk", "alindi",
+             "izin-ekle")
+KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
 KISI_SECENEGI = re.compile(r"^--ki(?:s(?:i)?)?(?:=(.*))?$")   # alindi --kisi (ve kısaltmaları)
@@ -469,6 +472,9 @@ def kb_calistir(argv):
         raise Stop("kullanım: tf_bilgi.py kb [--yonetim] <kb.py komutu> [argümanlar]")
     if any(KOK_SECENEGI.match(t) for t in argv):
         raise Stop("--kok verilemez: kb.py her zaman TF Bilgi önbellek klonunda çalışır.")
+    adlar = [t.split("=", 1)[0] for t in argv if t.startswith("--") and t != "--"]
+    if len(adlar) != len(set(adlar)) or sum(1 for t in argv if KISI_SECENEGI.match(t)) > 1:
+        raise Stop("Aynı seçenek iki kez verilemez (ör. --kisi). Komutu tek seçenekle tekrar yazın.")
     komut = kb_alt_komutu(argv)
     if komut in KB_YASAK:
         raise Stop(KB_YASAK[komut])
@@ -476,10 +482,10 @@ def kb_calistir(argv):
         raise Stop(f"kb.py alt komutu izinli değil: {komut!r} (izinliler: {', '.join(KB_IZINLI)}).")
     kok = mevcut_kok(alan)
     kb = kb_yolu(kok)
-    if komut == "alindi":
+    if komut in KENDI_ADINA:
         istenen, kisi = alindi_kisisi(argv), kendi_kisin(kok)
         if istenen != kisi:
-            raise Stop(f"'Alındı' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{kisi}'.")
+            raise Stop(f"'{komut}' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{kisi}'.")
     sys.stdout.flush()
     return subprocess.run([sys.executable, str(kb), *argv], cwd=kok, env=alt_ortam(kok)).returncode
 
@@ -603,10 +609,18 @@ def goreli(kok, yol):
     return norm
 
 
-def defter_yalniz_ekleme_mi(kok):
-    yeni = (kok / DEFTER).read_text(encoding="utf-8")
-    proc = git(kok, "show", f"origin/{DAL}:{DEFTER}", check=False)
+def defter_yalniz_ekleme_mi(kok, yol=DEFTER):
+    yeni = (kok / yol).read_text(encoding="utf-8")
+    proc = git(kok, "show", f"origin/{DAL}:{yol}", check=False)
     return proc.returncode != 0 or yeni.startswith(proc.stdout)
+
+
+def izinler_yeni_satirlari(kok):
+    """origin'dekine göre IZINLER.tsv'ye eklenen satırlar (başlık hariç)."""
+    yeni = (kok / IZINLER).read_text(encoding="utf-8").splitlines()
+    proc = git(kok, "show", f"origin/{DAL}:{IZINLER}", check=False)
+    eski = proc.stdout.splitlines() if proc.returncode == 0 else yeni[:1]
+    return yeni[len(eski):]
 
 
 def kaydet(argv):
@@ -625,6 +639,11 @@ def kaydet(argv):
         elif yol == DEFTER:
             if not defter_yalniz_ekleme_mi(kok):
                 sorunlar.append(f"{DEFTER}: yalnız satır eklenebilir; mevcut satırlar değişmiş")
+        elif yol == IZINLER:
+            if not defter_yalniz_ekleme_mi(kok, IZINLER):
+                sorunlar.append(f"{IZINLER}: yalnız satır eklenebilir; mevcut satırlar değişmiş")
+            elif any((s.split("\t") + ["", "", ""])[2] != kendi_kisin(kok) for s in izinler_yeni_satirlari(kok)):
+                sorunlar.append(f"{IZINLER}: yanlış alarm onayı yalnız kendi adınıza eklenir")
         elif not any(desen.match(yol) for desen in YENI_YOLLAR):
             sorunlar.append(f"{yol}: /paylas bu yola yazamaz (yalnız yeni girdiler/, ham/, onaylar/ dosyaları ve "
                             f"{DEFTER}; geri kalanı kütüphanecinin)")
