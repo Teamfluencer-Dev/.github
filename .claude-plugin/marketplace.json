@@ -11,6 +11,12 @@
       "description": "Mandatory PR review on the Claude subscription: fresh-context Opus agent + required claude-review check",
       "source": "./claude-plugins/tf-review",
       "category": "productivity"
+    },
+    {
+      "name": "tf-bilgi",
+      "description": "TF Bilgi: ekip bilgi bankasına /paylas ile tek komutla yaz, /bilgi ile oku (model API'si yok)",
+      "source": "./claude-plugins/tf-bilgi",
+      "category": "productivity"
     }
   ]
 }

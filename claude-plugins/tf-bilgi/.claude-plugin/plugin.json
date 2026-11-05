@@ -1,0 +1,9 @@
+{
+  "name": "tf-bilgi",
+  "version": "0.1.0",
+  "description": "TF Bilgi: ekibin GitHub'daki bilgi bankasına tek komutla yaz (/paylas: konu eşleştirme, sır/KVKK taraması, tek onay kartı, commit) ve oku (/bilgi: kuyruğun, son girdiler, konu, arama, alındı). Model API'si ya da anahtar kullanmaz.",
+  "author": {
+    "name": "Teamfluencer"
+  },
+  "homepage": "https://github.com/Teamfluencer-Dev/.github/tree/main/claude-plugins/tf-bilgi"
+}
