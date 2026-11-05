@@ -1,7 +1,7 @@
 name: Tests
 
-# Callers pin `actions/coverage-summary@main` and the tf-review plugin ships
-# from `main`, so every change here is checked before it merges.
+# Callers pin `actions/coverage-summary@main` and the tf-review / tf-bilgi plugins
+# ship from `main`, so every change here is checked before it merges.
 on:
   pull_request:
   push:
@@ -26,3 +26,5 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name ci
           python3 -m unittest discover -s claude-plugins/tf-review/tests -v
+      - name: tf-bilgi plugin
+        run: python3 -m unittest discover -s claude-plugins/tf-bilgi/tests -v
