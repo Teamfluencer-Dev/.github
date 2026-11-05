@@ -11,6 +11,9 @@ and JSON shapes of the TF Bilgi contract (sections 9 and 11), never on its code.
                                  person, print JSON (kok, alan, kisi, kb, uzak, ...).
   kb [--yonetim] <args...>       Run the cache's kb.py; stdout, stderr and exit
                                  code pass through. kaydet/yenile/ozet are refused.
+                                 toplu-hazirla (/toplu-paylas) needs absolute
+                                 source paths and one --cikti strictly under
+                                 <cache>/gecici/ (staging never lands in a clone).
   gecici AD                      Save stdin as <cache>/gecici/AD (scratch input for
                                  kb.py --dosya / tara; never inside a clone).
   maskele [--yonetim] DOSYA      kb.py tara --maskele -> masked copy in <cache>/gecici/.
@@ -65,11 +68,12 @@ IZINLER = "ham/IZINLER.tsv"  # insanın onayladığı yanlış alarmlar: yalnız
 # Sözleşme §10: /paylas ve /bilgi oturumunun kb.py'de çalıştırabildiği alt komutlar (yazanlar yalnız
 # ham-ekle ve alindi; commit'i her zaman `tf_bilgi.py kaydet` yapar).
 KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "son", "konu", "ara", "kuyruk", "alindi",
-             "izin-ekle")
+             "izin-ekle", "toplu-hazirla")
 KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
 KISI_SECENEGI = re.compile(r"^--ki(?:s(?:i)?)?(?:=(.*))?$")   # alindi --kisi (ve kısaltmaları)
+CIKTI_SECENEGI = re.compile(r"^--c(?:i(?:k(?:t(?:i)?)?)?)?(?:=(.*))?$")  # toplu-hazirla --cikti (ve kısaltmaları)
 KB_YASAK = {
     "kaydet": "kb.py kaydet doğrudan çalıştırılmaz: `tf_bilgi.py kaydet` kullanın (önce yolları denetler).",
     "yenile": "kb.py yenile kütüphanecinin işi (KONULAR.md, SON.md, kuyruk/ gibi üretilen dosyaları yazar); "
@@ -320,6 +324,16 @@ def bugun():
         return datetime.date.today()
 
 
+def damga():
+    """YYYYMMDD-HHMMSS (Europe/Istanbul): /toplu-paylas hazırlık klasörünün adı için."""
+    try:
+        from zoneinfo import ZoneInfo
+        simdi = datetime.datetime.now(ZoneInfo("Europe/Istanbul"))
+    except Exception:
+        simdi = datetime.datetime.now()
+    return simdi.strftime("%Y%m%d-%H%M%S")
+
+
 # --- cache clone ---
 
 def gh_kimlik_ayari(kok):
@@ -414,6 +428,7 @@ def hazirla(argv):
     gun = bugun()
     sonuc = {
         "kok": str(kok), "alan": alan, "kisi": kisi, "kb": str(kb), "uzak": uzak,
+        "damga": damga(),
         "kisi_kaynagi": kaynak,
         "baglanti_koku": f"https://github.com/{uzak}/blob/{DAL}/",
         "bugun": gun.isoformat(), "bugun_gun": GUNLER[gun.weekday()],
@@ -457,6 +472,42 @@ def alindi_kisisi(argv):
     return None
 
 
+def toplu_hazirla_denetle(argv):
+    """toplu-hazirla: hazırlık klasörü yalnız eklentinin gecici/ klasörünün altında, yollar mutlak.
+
+    kb.py önbellek klonunda (cwd) çalıştığı için göreli yol klonun içine çözülürdü; mutlak yol istenir."""
+    ciktilar, kaynaklar, komut_gecti, i = [], [], False, 0
+    while i < len(argv):
+        t = argv[i]
+        m = CIKTI_SECENEGI.match(t)
+        if m:
+            deger = m.group(1) if m.group(1) is not None else (argv[i + 1] if i + 1 < len(argv) else "")
+            ciktilar.append(deger)
+            i += 1 if m.group(1) is not None else 2
+        elif DEGERLI_SECENEK.match(t):
+            i += 2
+        elif t.startswith("-") and t != "-":
+            i += 1
+        else:
+            if komut_gecti:
+                kaynaklar.append(t)
+            komut_gecti = True
+            i += 1
+    gecici = gecici_dizin().resolve()
+    if len(ciktilar) != 1 or not ciktilar[0]:
+        raise Stop(f"toplu-hazirla için tek bir --cikti klasörü gerekli: {gecici}/toplu-<damga>")
+    cikti = Path(ciktilar[0]).expanduser()
+    if not cikti.is_absolute():
+        raise Stop(f"--cikti mutlak yol olmalı: {ciktilar[0]} (örnek: {gecici}/toplu-<damga>)")
+    if gecici not in cikti.resolve().parents:
+        raise Stop(f"--cikti yalnız eklentinin geçici klasörünün altında olabilir ({gecici}/…): {ciktilar[0]}")
+    if not kaynaklar:
+        raise Stop("toplu-hazirla için en az bir dosya ya da klasör yolu gerekli.")
+    for k in kaynaklar:
+        if not Path(k).expanduser().is_absolute():
+            raise Stop(f"Kaynak yolu mutlak olmalı: {k} (kb.py önbellek klonunda çalışır; göreli yol orada çözülür)")
+
+
 def kendi_kisin(kok):
     """Çözülen kişi; çözülemiyorsa yazma işlemi durur."""
     kisi, _ = kisi_bul(kok, [])
@@ -486,6 +537,8 @@ def kb_calistir(argv):
         istenen, kisi = alindi_kisisi(argv), kendi_kisin(kok)
         if istenen != kisi:
             raise Stop(f"'{komut}' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{kisi}'.")
+    if komut == "toplu-hazirla":
+        toplu_hazirla_denetle(argv)
     sys.stdout.flush()
     return subprocess.run([sys.executable, str(kb), *argv], cwd=kok, env=alt_ortam(kok)).returncode
 

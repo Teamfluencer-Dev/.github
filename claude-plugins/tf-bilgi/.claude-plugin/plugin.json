@@ -1,7 +1,7 @@
 {
   "name": "tf-bilgi",
-  "version": "0.1.0",
-  "description": "TF Bilgi: ekibin GitHub'daki bilgi bankasına tek komutla yaz (/paylas: konu eşleştirme, sır/KVKK taraması, tek onay kartı, commit) ve oku (/bilgi: kuyruğun, son girdiler, konu, arama, alındı). Model API'si ya da anahtar kullanmaz.",
+  "version": "0.2.0",
+  "description": "TF Bilgi: ekibin GitHub'daki bilgi bankasına tek komutla yaz (/paylas: konu eşleştirme, sır/KVKK taraması, tek onay kartı, commit), bir klasör dolusu belgeyi toplu paylaş (/toplu-paylas: öğe öğe ekip/yönetim/girmez sınıflama, tek onay tablosu, alan başına commit) ve oku (/bilgi: kuyruğun, son girdiler, konu, arama, alındı). Model API'si ya da anahtar kullanmaz.",
   "author": {
     "name": "Teamfluencer"
   },

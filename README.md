@@ -109,7 +109,8 @@ Re-enable it right after.
 
 TF Bilgi, ekibin GitHub'daki bilgi bankasıdır: `Teamfluencer-Dev/tf-bilgi` (ekip) ve
 `Teamfluencer-Dev/tf-bilgi-yonetim` (yönetim), ikisi de private. Eklenti Claude Code'dan
-tek komutla yazmayı (`/paylas`) ve okumayı (`/bilgi`) sağlar. Kuralların tek kaynağı
+tek komutla yazmayı (`/paylas`), bir klasör dolusu belgeyi toplu paylaşmayı (`/toplu-paylas`) ve
+okumayı (`/bilgi`) sağlar. Kuralların tek kaynağı
 KB deposundaki `araclar/kb.py` ve `CLAUDE.md`'dir; eklenti yalnız onu çağırır.
 
 ### Kurulum (her geliştirici, bir kez)
@@ -130,6 +131,7 @@ isteyin). Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan 
 /paylas ekteki PDF yönetim için; Cuma'ya kadar fiyat kararı lazım ./abonelik.pdf
 /paylas geldiğim nokta: ödeme ekranı bitti, test bekliyor
 /paylas api#1976 web#689 merge sırası devri
+/toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
 /bilgi konu K-0003
@@ -146,6 +148,19 @@ kuyruklar kütüphanecinindir, eklenti onlara dokunmaz. Yönetim deposuna yalnı
 `--yonetim` ile ya da açıkça "yönetim için" denince yazılır; içerik tek başına alanı
 belirlemez. `pr-listesi` türünde tablo `gh` ile (yalnız okuma) PR'ların
 `claude-review` ve merge durumundan kurulur.
+
+`/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
+bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce
+`kb.py toplu-hazirla` ile `~/.tf-bilgi/gecici/toplu-<zaman>/` altına açar (düz metin,
+sır/KVKK taraması, konu adayları, `zaten_var` / `kopya` bayrakları; depoya yazmaz).
+Sonra her öğeyi **ekip**, **yönetim** ya da **girmez** diye sınıflar (10'dan fazla
+öğede alt ajanlarla, ~15'lik gruplar), tek bir tablo (Ekip / Yönetim / Girmeyenler)
+gösterir ve **Onayla / Düzelt / Vazgeç** diye sorar. Onayda her alana tek commit
+atılır. Ham dosya yalnız tarama temizse, influencer kimliği ve açık güvenlik ayrıntısı
+yoksa ve dosya 20 MB'tan küçükse depoya girer. Yönetim öğesi hiçbir zaman ekip
+deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kalır.
+`--yonetim-yok` yönetim deposunu bu çalıştırmada hiç kullanmaz. KB deposundaki
+`kb.py`'nin `toplu-hazirla`'yı bilmesi gerekir (KB `CLAUDE.md` §8.1).
 
 ### Ortam değişkenleri
 

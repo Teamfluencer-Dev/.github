@@ -465,6 +465,54 @@ class KbGecisTest(Base):
         self.assertIn("hazirla", self.stop("kb", "son"))
 
 
+class TopluHazirlaTest(Base):
+    """/toplu-paylas: kb.py toplu-hazirla yalnız gecici/ altına hazırlık klasörü kurabilir."""
+
+    def setUp(self):
+        super().setUp()
+        self.ok("hazirla")
+        self.gecici = self.cache / "gecici"
+        self.gecici.mkdir(parents=True, exist_ok=True)
+        self.kaynak = self.tmp / "artifaktlar"
+        self.kaynak.mkdir()
+
+    def test_whitelisted_and_cikti_under_gecici_passes_through(self):
+        hedef = self.gecici / "toplu-20261105-120000"
+        code, out, _ = self.cli("kb", "toplu-hazirla", str(self.kaynak), "--cikti", str(hedef))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["komut"], ["toplu-hazirla", str(self.kaynak), "--cikti", str(hedef)])
+        for argv in ((f"--ci={hedef}",), ("--json", "--cik", str(hedef)), ("--bugun", "2026-11-05", "--cikti", str(hedef))):
+            code, out, _ = self.cli("kb", "toplu-hazirla", str(self.kaynak), *argv)
+            self.assertEqual(code, 0, (argv, out))
+        self.ok("hazirla", "--yonetim")
+        code, out, _ = self.cli("kb", "--yonetim", "toplu-hazirla", str(self.kaynak), "--cikti", str(hedef) + "-yonetim")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["kok"], str(self.kok("yonetim")))
+
+    def test_cikti_outside_gecici_or_relative_is_refused(self):
+        (self.gecici / "bag").symlink_to(self.tmp)
+        vakalar = (
+            (("--cikti", str(self.tmp / "disari")), "geçici klasörünün altında"),
+            (("--cikti", str(self.gecici)), "geçici klasörünün altında"),
+            (("--cikti", str(self.gecici / ".." / "toplu")), "geçici klasörünün altında"),
+            (("--cikti", str(self.gecici / "bag" / "toplu")), "geçici klasörünün altında"),
+            (("--cikti", str(self.kok() / "toplu")), "geçici klasörünün altında"),
+            ((f"--c={self.tmp / 'disari'}",), "geçici klasörünün altında"),
+            (("--cikti", "toplu-1"), "mutlak"),
+            ((), "tek bir --cikti"),
+            (("--cikti",), "tek bir --cikti"),
+            (("--cikti", str(self.gecici / "a"), "--cik", str(self.gecici / "b")), "tek bir --cikti"),
+        )
+        for argv, kelime in vakalar:
+            self.assertIn(kelime, self.stop("kb", "toplu-hazirla", str(self.kaynak), *argv), argv)
+        self.assertIn("mutlak", self.stop("kb", "toplu-hazirla", "artifaktlar", "--cikti", str(self.gecici / "a")))
+        self.assertIn("en az bir", self.stop("kb", "toplu-hazirla", "--cikti", str(self.gecici / "a")))
+        self.assertFalse((self.tmp / "disari").exists())
+
+    def test_hazirla_gives_a_timestamp_for_the_staging_folder(self):
+        self.assertRegex(self.ok("hazirla")["damga"], r"^\d{8}-\d{6}$")
+
+
 class YazTest(Base):
     def setUp(self):
         super().setUp()
