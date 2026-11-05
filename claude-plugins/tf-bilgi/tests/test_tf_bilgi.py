@@ -312,12 +312,19 @@ class HazirlaTest(Base):
 
 
 class KisiTest(Base):
-    def test_env_var_wins(self):
+    def test_env_var_conflicting_with_gh_login_stops(self):
         os.environ["TF_BILGI_KISI"] = "mert"
         os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
-        result = self.ok("hazirla")
-        self.assertEqual((result["kisi"], result["kisi_kaynagi"]), ("mert", "TF_BILGI_KISI"))
-        self.assertNotIn("kisiler", result)
+        out = self.stop("hazirla")
+        self.assertIn("Başkası adına paylaşılmaz", out)
+
+    def test_env_var_used_when_gh_login_unmapped_or_same(self):
+        os.environ["TF_BILGI_KISI"] = "mert"
+        for login in ("bilinmeyen-gh", "mert-gh", ""):
+            os.environ["FAKE_GH_LOGIN"] = login
+            result = self.ok("hazirla")
+            self.assertEqual((result["kisi"], result["kisi_kaynagi"]), ("mert", "TF_BILGI_KISI"), login)
+            self.assertNotIn("kisiler", result)
 
     def test_gh_login_second(self):
         os.environ["FAKE_GH_LOGIN"] = "Ayse-GH"
@@ -416,6 +423,28 @@ class KbGecisTest(Base):
         for komut in ("kaydet", "yenile", "ozet"):
             self.assertIn("kb.py", self.stop("kb", komut))
 
+    def test_guard_finds_subcommand_like_argparse(self):
+        self.ok("hazirla")
+        for argv in (("--json", "kaydet", "--mesaj", "x", "CLAUDE.md"), ("--bugun", "2026-11-05", "yenile"),
+                     ("--bu", "2026-11-05", "ozet", "gunluk"), ("--", "kaydet", "--mesaj", "x", "KONULAR.md"),
+                     ("--json", "fsck"), ("taslakx",)):
+            out = self.stop("kb", *argv)
+            self.assertTrue("kb.py" in out or "izinli değil" in out, (argv, out))
+        for argv in (("--kok", "/tmp", "son"), ("son", "--kok", "/tmp"), ("son", "--ko=/tmp"), ("--k", "/tmp", "son")):
+            self.assertIn("--kok verilemez", self.stop("kb", *argv), argv)
+        code, out, _ = self.cli("kb", "--json", "son", "--gun", "3")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["komut"], ["--json", "son", "--gun", "3"])
+
+    def test_alindi_only_for_resolved_person(self):
+        self.ok("hazirla")
+        self.assertIn("Kim olduğunuz bulunamadı", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert"))
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        self.assertIn("kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "mert"))
+        self.assertIn("kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--ki=mert"))
+        code, out, _ = self.cli("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse")
+        self.assertEqual(code, 0, out)
+
     def test_needs_hazirla_first(self):
         self.assertIn("hazirla", self.stop("kb", "son"))
 
@@ -445,6 +474,12 @@ class YazTest(Base):
         self.assertIn("--uzerine", self.stop("yaz", stdin=girdi_metni(baslik="İkinci")))
         self.ok("yaz", "--uzerine", stdin=girdi_metni(baslik="İkinci"))
         self.assertIn("İkinci", (self.kok() / "girdiler/2026/11/B-20261105-ayse-01.md").read_text())
+
+    def test_three_digit_counter_and_own_name_only(self):
+        result = self.ok("yaz", stdin=girdi_metni("B-20261105-ayse-100"))
+        self.assertEqual(result["yol"], "girdiler/2026/11/B-20261105-ayse-100.md")
+        os.environ["TF_BILGI_KISI"] = "mert"
+        self.assertIn("kendi adınıza", self.stop("yaz", stdin=girdi_metni("B-20261105-ayse-02")))
 
     def test_id_prefix_must_match_repo(self):
         self.assertIn("öneki 'B'", self.stop("yaz", stdin=girdi_metni("BY-20261105-ayse-01")))
@@ -512,6 +547,9 @@ class KaydetTest(Base):
         onay = "onaylar/B-20261029-ayse-01--mert.md"
         (self.kok() / onay).parent.mkdir(parents=True)
         (self.kok() / onay).write_text("---\ngirdi: B-20261029-ayse-01\nkisi: mert\ntarih: 2026-11-05\n---\n")
+        os.environ["TF_BILGI_KISI"] = "ayse"
+        self.assertIn("kendi adınıza", self.stop("kaydet", "--mesaj", "x", onay))
+        os.environ["TF_BILGI_KISI"] = "mert"
         result = self.ok("kaydet", "--mesaj", "alindi: B-20261029-ayse-01 (mert)", onay)
         self.assertTrue(self.published(onay))
         self.assertEqual(result["baglantilar"][0]["yol"], onay)

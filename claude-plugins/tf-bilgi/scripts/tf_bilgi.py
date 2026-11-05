@@ -52,14 +52,21 @@ ALANLAR = {
 }
 SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GITHUB_URL_RE = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/*$")
-GIRDI_ID_RE = re.compile(r"^([A-Z]+)-(\d{4})(\d{2})\d{2}-[a-z0-9]+-\d{2}$")
+GIRDI_ID_RE = re.compile(r"^([A-Z]+)-(\d{4})(\d{2})\d{2}-([a-z][a-z0-9]*)-\d{2,3}$")
 # Contract section 10: the only repo paths a /paylas or /bilgi session may add.
 YENI_YOLLAR = (
-    re.compile(r"^girdiler/\d{4}/\d{2}/[A-Z]+-\d{8}-[a-z0-9]+-\d{2}\.md$"),
-    re.compile(r"^ham/\d{4}/\d{2}/[0-9a-f]{8}-[^/]+$"),
-    re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z0-9]+-\d{2}--[a-z0-9]+\.md$"),
+    re.compile(r"^girdiler/\d{4}/\d{2}/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}\.md$"),
+    re.compile(r"^ham/\d{4}/\d{2}/[0-9a-f]{8}-[a-z0-9][a-z0-9.-]*$"),
+    re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}--[a-z][a-z0-9]*\.md$"),
 )
+ONAY_RE = re.compile(r"^onaylar/[A-Z]+-\d{8}-[a-z][a-z0-9]*-\d{2,3}--([a-z][a-z0-9]*)\.md$")
 DEFTER = "ham/DEFTER.tsv"
+# Sözleşme §10: /paylas ve /bilgi oturumunun kb.py'de çalıştırabildiği alt komutlar (yazanlar yalnız
+# ham-ekle ve alindi; commit'i her zaman `tf_bilgi.py kaydet` yapar).
+KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "son", "konu", "ara", "kuyruk", "alindi")
+KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
+DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
+KISI_SECENEGI = re.compile(r"^--ki(?:s(?:i)?)?(?:=(.*))?$")   # alindi --kisi (ve kısaltmaları)
 KB_YASAK = {
     "kaydet": "kb.py kaydet doğrudan çalıştırılmaz: `tf_bilgi.py kaydet` kullanın (önce yolları denetler).",
     "yenile": "kb.py yenile kütüphanecinin işi (KONULAR.md, SON.md, kuyruk/ gibi üretilen dosyaları yazar); "
@@ -267,20 +274,30 @@ def kisileri_oku(kok):
 
 
 def kisi_bul(kok, notlar):
-    """TF_BILGI_KISI > gh login vs kisiler.json `github` > git user.email vs `eposta` > None."""
+    """gh login ↔ kisiler.json `github` > TF_BILGI_KISI > git user.email ↔ `eposta` > None.
+
+    TF_BILGI_KISI yalnız gh girişi bir kişiye eşlenemiyorsa geçerlidir; eşlenen kişiyle çelişirse durur
+    (başkası adına paylaşmayı önler). Bu bir hata önleyicidir, kötü niyetli yazara karşı koruma değildir."""
     kisiler = kisileri_oku(kok)
     if not kisiler:
         notlar.append("kisiler.json okunamadı; kim olduğunuz otomatik bulunamadı.")
-    ortam = os.environ.get("TF_BILGI_KISI", "").strip()
-    if ortam:
-        if ortam in kisiler:
-            return ortam, "TF_BILGI_KISI"
-        notlar.append(f"TF_BILGI_KISI='{ortam}' kisiler.json'da yok; diğer yollarla arandı.")
     login = gh_login()
+    gh_kisi = None
     if login:
         for anahtar in sorted(kisiler):
             if str(kisiler[anahtar].get("github") or "").lower() == login.lower():
-                return anahtar, "github"
+                gh_kisi = anahtar
+                break
+    ortam = os.environ.get("TF_BILGI_KISI", "").strip()
+    if ortam:
+        if ortam in kisiler:
+            if gh_kisi and gh_kisi != ortam:
+                raise Stop(f"TF_BILGI_KISI='{ortam}' ama GitHub girişin ({login}) kisiler.json'da '{gh_kisi}'. "
+                           "Başkası adına paylaşılmaz: TF_BILGI_KISI'yi düzelt ya da kaldır.")
+            return ortam, "TF_BILGI_KISI"
+        notlar.append(f"TF_BILGI_KISI='{ortam}' kisiler.json'da yok; diğer yollarla arandı.")
+    if gh_kisi:
+        return gh_kisi, "github"
     eposta = git(kok, "config", "user.email", check=False).stdout.strip().lower()
     if eposta:
         for anahtar in sorted(kisiler):
@@ -415,14 +432,54 @@ def alan_ayikla(argv):
     return "ekip", argv
 
 
+def kb_alt_komutu(argv):
+    """kb.py'nin argparse'ı gibi: seçenekleri (değer alanlarıyla) atlayıp ilk konumsal sözcüğü bulur."""
+    i = 0
+    while i < len(argv):
+        t = argv[i]
+        if t == "--":
+            return argv[i + 1] if i + 1 < len(argv) else None
+        if t.startswith("-") and t != "-":
+            i += 2 if DEGERLI_SECENEK.match(t) else 1
+            continue
+        return t
+    return None
+
+
+def alindi_kisisi(argv):
+    for i, t in enumerate(argv):
+        m = KISI_SECENEGI.match(t)
+        if m:
+            return m.group(1) if m.group(1) is not None else (argv[i + 1] if i + 1 < len(argv) else None)
+    return None
+
+
+def kendi_kisin(kok):
+    """Çözülen kişi; çözülemiyorsa yazma işlemi durur."""
+    kisi, _ = kisi_bul(kok, [])
+    if not kisi:
+        raise Stop("Kim olduğunuz bulunamadı; bu işlem yalnız kendi adınıza yapılır. Kabuk profilinize "
+                   "`export TF_BILGI_KISI=<kisiler.json anahtarınız>` ekleyin.")
+    return kisi
+
+
 def kb_calistir(argv):
     alan, argv = alan_ayikla(argv)
     if not argv:
         raise Stop("kullanım: tf_bilgi.py kb [--yonetim] <kb.py komutu> [argümanlar]")
-    if argv[0] in KB_YASAK:
-        raise Stop(KB_YASAK[argv[0]])
+    if any(KOK_SECENEGI.match(t) for t in argv):
+        raise Stop("--kok verilemez: kb.py her zaman TF Bilgi önbellek klonunda çalışır.")
+    komut = kb_alt_komutu(argv)
+    if komut in KB_YASAK:
+        raise Stop(KB_YASAK[komut])
+    if komut not in KB_IZINLI:
+        raise Stop(f"kb.py alt komutu izinli değil: {komut!r} (izinliler: {', '.join(KB_IZINLI)}).")
     kok = mevcut_kok(alan)
     kb = kb_yolu(kok)
+    if komut == "alindi":
+        istenen, kisi = alindi_kisisi(argv), kendi_kisin(kok)
+        if istenen != kisi:
+            raise Stop(f"'Alındı' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{kisi}'.")
     sys.stdout.flush()
     return subprocess.run([sys.executable, str(kb), *argv], cwd=kok, env=alt_ortam(kok)).returncode
 
@@ -512,6 +569,10 @@ def yaz(argv):
         raise Stop(f"Girdi kimliği sözleşmeye uymuyor: {girdi_id} (beklenen: <önek>-YYYYMMDD-<kisi>-NN).")
     kok = mevcut_kok(alan)
     ayar = depo_ayari(kok, alan)
+    kisi, _ = kisi_bul(kok, [])
+    yazar = re.search(r"""(?m)^yazar:\s*["']?([a-z][a-z0-9]*)""", metin)
+    if kisi and (not yazar or yazar.group(1) != kisi or match.group(4) != kisi):
+        raise Stop(f"Girdi yalnız kendi adınıza yazılır: kimlikteki ve `yazar` alanındaki kişi '{kisi}' olmalı.")
     onek = ayar.get("girdi_onek")
     if onek and match.group(1) != onek:
         raise Stop(f"{girdi_id} bu depoya ait değil: bu deponun girdi öneki '{onek}'. Kimliği `kb taslak` ile "
@@ -569,6 +630,8 @@ def kaydet(argv):
                             f"{DEFTER}; geri kalanı kütüphanecinin)")
         elif yayimlanmis_mi(kok, yol):
             sorunlar.append(f"{yol}: zaten yayımlanmış; yayımlanmış dosya değiştirilmez")
+        elif ONAY_RE.match(yol) and ONAY_RE.match(yol).group(1) != kendi_kisin(kok):
+            sorunlar.append(f"{yol}: 'alındı' yalnız kendi adınıza kaydedilir")
     hazir = [y for y in git(kok, "diff", "--cached", "--name-only").stdout.splitlines() if y and y not in yollar]
     if hazir:
         sorunlar.append(f"başka dosyalar commit için hazırlanmış: {', '.join(hazir[:5])} — önce: "

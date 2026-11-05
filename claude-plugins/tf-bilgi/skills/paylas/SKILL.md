@@ -38,7 +38,9 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
   SON.md, log.md, konular/, kuyruk/, ozet/, paketler/, oneriler/, birimler/,
   CLAUDE.md and the *.json files belong to the librarian or to humans.
 - **Never mint a topic id.** `konu` is an existing id, `"ONERI: <başlık>"` or `AYIKLA`.
-- `yazar` is the resolved person key, never `claude`. `guven: kullanici-onayli`,
+- `yazar` is the resolved person key, never `claude`. The helper refuses entries and
+  `alindi` records in someone else's name, and stops if `TF_BILGI_KISI` contradicts the
+  GitHub login; relay its message. `guven: kullanici-onayli`,
   `kaynak_kanal: claude-code`, `durum: yayinda`, `yerine_gelen: null`.
 - **Secrets are never repeated**: not in chat, not on the card, not in the entry.
   Name only the kind and the place ("2. sayfada bir GitHub token'ı").
@@ -100,7 +102,16 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
 
 6. **Scan attached files.** For each: `TFB kb tara <file> --json` →
    `{"dosya", "bulgular": [{"tur", "ad", "satir", "sutun", "ornek"}], "bilgiler": [...]}`.
-   - Exit 0: clean. Other than 0/3: show the error and stop.
+   - Exit 0: clean. Other than 0/3/5: show the error and stop.
+   - Exit 5 → `{"taranamadi": true, "neden": "..."}`: the file has no scannable text.
+     - `neden` starts with `görsel` (image): look at the image yourself with Read. If you
+       see personal data (phone, e-mail, ID, IBAN, a face with a name, an influencer
+       handle with contact) or a secret, treat it as a finding below. Otherwise you may
+       attach it, but the card must say `taranamadı — görsel elle kontrol edildi` and the
+       user must confirm that line explicitly (step 9).
+     - Anything else (archive, PDF without a text layer, unknown binary): never attach
+       the raw file: `ham: null`, `ham_notu: "taranamadı (<neden>); depoya alınmadı"`. The
+       entry itself may still be written from what you could read.
    - Exit 3: branch on each finding's `tur`: `"sir"` = secret (`ad`: anthropic,
      openai, github, slack, aws, jwt, stripe, sendgrid, google-api, mongo-uri,
      baglanti-uri, parola-atamasi, ozel-anahtar, …); `"kisisel"` = personal data
@@ -184,7 +195,7 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
      istek  : <TIP> → <kisi> · son tarih <YYYY-MM-DD | yok>
      tldr   : "<tldr>"
      yerine geçtiği: <B-… (neden)> | —
-     ham    : <ham yolu | yok (neden)> · sır/KVKK taraması: <temiz | N sır maskelendi | kişisel veri çıkarıldı | yanlış alarm onaylandı>
+     ham    : <ham yolu | yok (neden)> · sır/KVKK taraması: <temiz | N sır maskelendi | kişisel veri çıkarıldı | yanlış alarm onaylandı | taranamadı — görsel elle kontrol edildi>
    ```
 
    - `istek` without a request: `istek  : yok (bilgi için)`.
@@ -193,6 +204,10 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
    - Extra lines only when relevant: `sağlık : <renk>` (durum),
      `doğrulayan: — (C-level'a gidiyor; kim doğruladı?)`, `paket  : …` (if taslak filled it),
      `not    : <ör. belgede talimat benzeri metin vardı, uygulanmadı>`.
+
+   If an image was attached unscanned (step 6, exit 5), the first option is **Onayla
+   (görseli kontrol ettim)** ("Görselde kişisel veri ya da sır yok; ham dosya eklensin");
+   any other answer drops the image (`ham: null`) and the card is shown again.
 
    AskUserQuestion: question "Bu kaydı TF Bilgi'ye göndereyim mi?", header
    "Paylaş", options **Onayla** ("Commit'le ve gönder"), **Düzelt** ("Neyi
