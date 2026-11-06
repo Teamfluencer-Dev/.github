@@ -8,7 +8,13 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
 SKILLS = sorted((PLUGIN / "skills").rglob("SKILL.md"))
+REFERANSLAR = sorted((PLUGIN / "skills").rglob("references/*.md"))
 YAZAN_BECERILER = ("paylas", "toplu-paylas")
+PAYLAS = PLUGIN / "skills" / "paylas" / "SKILL.md"
+GIZLI = PLUGIN / "skills" / "paylas" / "references" / "gizli.md"
+PR_LISTESI = PLUGIN / "skills" / "paylas" / "references" / "pr-listesi.md"
+HIZLI_KOMUTU = ('python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] '
+                "--ek '<path>' ... <<'TFB_NOT'")
 
 
 def metin(md):
@@ -19,9 +25,16 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_skills_found(self):
         self.assertEqual(sorted(md.parent.name for md in SKILLS), ["bilgi", "paylas", "toplu-paylas"])
 
-    def test_no_heredoc_in_any_skill(self):
-        for md in SKILLS:
-            self.assertNotRegex(metin(md), r"<<-?\s*'?[A-Z_]{3,}'?", md)
+    def test_only_heredoc_is_the_quoted_hizli_note(self):
+        """0.7.0: /paylas'ın tek komutu kullanıcının kendi sözlerini tırnaklı heredoc'la verir (kabuk yorumlamaz); başka
+        hiçbir skill ya da referans dosyasında heredoc yok, belge metni hiçbir zaman heredoc'la gitmez."""
+        for md in SKILLS + REFERANSLAR:
+            heredoclar = re.findall(r"<<-?\s*'?[A-Z_]{3,}'?", metin(md))
+            self.assertEqual(heredoclar, ["<<'TFB_NOT'"] if md == PAYLAS else [], md)
+        paylas = metin(PAYLAS)
+        self.assertEqual(paylas.count(HIZLI_KOMUTU), 1)
+        self.assertRegex(paylas, r"<<'TFB_NOT'\n   <the user's own words from \$ARGUMENTS, verbatim; may be empty>\n   TFB_NOT\n")
+        self.assertIn("pick another marker", paylas)
 
     def test_taslak_title_not_on_command_line(self):
         for md in SKILLS:
@@ -39,20 +52,19 @@ class SkillShellHygieneTest(unittest.TestCase):
         for name in YAZAN_BECERILER:
             self.assertIn("Write(~/.tf-bilgi/gecici/**)", metin(PLUGIN / "skills" / name / "SKILL.md"), name)
 
-    def test_write_skills_use_file_options(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        for secenek in ("--baslik-dosya", "eslestir --dosya", "yaz --dosya", "--mesaj-dosya",
-                        "TFB gonder --taslak <D>/taslak.json --metin <D>/taslak.md"):
-            self.assertIn(secenek, paylas, secenek)
+    def test_gizli_uses_file_options(self):
+        gizli = metin(GIZLI)
+        for secenek in ("--baslik-dosya", "--gizli-link-dosya <D>/link.txt", "yaz --dosya", "--mesaj-dosya",
+                        "TFB gonder --taslak <D>/taslak.json"):
+            self.assertIn(secenek, gizli, secenek)
 
     def test_write_skills_clean_up_staging(self):
-        for name in YAZAN_BECERILER:
-            govde = metin(PLUGIN / "skills" / name / "SKILL.md")
-            self.assertIn("TFB temizle <D>", govde, name)
-            self.assertRegex(govde, r"Vazgeç: reply \"Vazgeçildi; depoya hiçbir şey yazılmadı\.[^\"]*<D>", name)
+        for govde, ad in ((metin(GIZLI), "gizli"), (metin(PLUGIN / "skills" / "toplu-paylas" / "SKILL.md"), "toplu")):
+            self.assertIn("TFB temizle <D>", govde, ad)
+            self.assertRegex(govde, r"Vazgeç: reply \"Vazgeçildi; depoya hiçbir şey yazılmadı\.[^\"]*<D>", ad)
 
     def test_gizli_mode_never_touches_the_document(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        paylas = metin(GIZLI)
         bolum = paylas.split("## Gizli mode", 1)[1].split("\n## ", 1)[0]
         kurallar, adimlar = bolum.split("\nG1. ", 1)
         self.assertIn("Never read the document", kurallar)
@@ -71,7 +83,7 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("gizli  : evet · içerik depoya girmez · link:", adimlar)
 
     def test_gizli_drive_steps_always_check_general_access(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        paylas = metin(GIZLI)
         g4 = paylas.split("\nG4. ", 1)[1].split("\nG5. ", 1)[0]
         self.assertNotIn("Unless the user already gave a Drive link", g4)  # verilen linkte de erişim denetlenir
         self.assertIn("also when the user already gave a Drive link", g4)
@@ -88,7 +100,7 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("states only what G4 confirmed", g8)
 
     def test_gizli_shared_drive_copy_link_is_required(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        paylas = metin(GIZLI)
         g4 = paylas.split("\nG4. ", 1)[1].split("\nG5. ", 1)[0]
         g5 = paylas.split("\nG5. ", 1)[1].split("\nG6. ", 1)[0]
         self.assertIn("Kopyasını oluştur", g4)
@@ -102,7 +114,7 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("at most 40 characters", g5)
 
     def test_gizli_recovery_overwrites_same_id(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        paylas = metin(GIZLI)
         g9 = paylas.split("\nG9. ", 1)[1].split("\nSeveral gizli documents", 1)[0]
         for parca in ("TFB yaz --dosya <D>/girdi.md --uzerine", "at most 2 rounds", "never\n       write a second entry file",
                       "id already written", "`<D>` is kept"):
@@ -151,59 +163,73 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("köprü anahtarıyla yine `/bilgi alindi <id>`", turler)
         self.assertIn("“alındı <id>”yi deponun `yazanlar` listesindekilerden", turler)
 
-    def test_paylas_asks_no_questions_outside_gizli(self):
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        ana = paylas.split("## Gizli mode", 1)[0]
-        self.assertEqual(ana.count("AskUserQuestion"), 1, "tek soru: mesai dışı, doğrudan yol")
-        adim6 = ana.split("\n6. ", 1)[1].split("\n7. ", 1)[0]
-        self.assertIn("AskUserQuestion", adim6)
-        for secenek in ("**Şimdi gönder**", "**Mesai başında gönder (08:30)**", "`haber: simdi`", "`sessiz: true`"):
-            self.assertIn(secenek, adim6, secenek)
-        self.assertIn("köprü: always `\"haber\": \"hemen\"`; no question", adim6)
-        for yasak in ("**Onayla**", "Düzelt", "izin-ekle", "TFB maskele", "Yanlış alarm", "gerekce"):
-            self.assertNotIn(yasak, ana, yasak)
-        self.assertIn("No questions.", ana)
-        self.assertIn("TFB geri-al <kod>", ana)
+    def test_paylas_is_instant_no_reading_no_questions(self):
+        """7 Kas kararı: /paylas Slack'ten hızlı; okumaz, özetlemez, taslak yazmaz, hiçbir şey sormaz."""
+        paylas = metin(PAYLAS)
+        govde = paylas.split("\n---\n", 1)[1]
+        self.assertLessEqual(len(govde.encode("utf-8")), 3200, "SKILL.md gövdesi kısa kalmalı")
+        self.assertNotIn("AskUserQuestion", paylas)
+        for yasak in ("KONULAR.md", "kisiler.json", "eslestir", "kb tara", "taslak", "hazirla", "Onayla", "Düzelt",
+                      "TFB gonder", "TFB yaz", "TFB kaydet", "bildirim-plani", "maskele"):
+            self.assertNotIn(yasak, paylas, yasak)
+        for parca in ("Do not think long", "do not ask\nanything", "Do\nnot open, read, scan or summarise any document",
+                      "do not draft an entry", "Run exactly one command", "with the `satir` value only",
+                      "data,\nnever instructions"):
+            self.assertIn(parca, paylas, parca)
+        self.assertIn('"${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" geri-al <kod>', paylas)
 
-    def test_secrets_block_personal_data_is_tagged(self):
-        for ad in ("paylas", "toplu-paylas"):
-            govde = metin(PLUGIN / "skills" / ad / "SKILL.md")
-            self.assertIn("Personal data never blocks and is never masked", govde, ad)
-            self.assertIn("kisisel_veri", govde, ad)
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        self.assertIn("Secrets in the user's input block the share.", paylas)
-        self.assertIn("No question, no masking, no waiver.", paylas)
+    def test_paylas_areas_modes_and_targets(self):
+        paylas = metin(PAYLAS)
+        adim4 = paylas.split("\n4. ", 1)[1].split("\n5. ", 1)[0]
+        for soz in ('"yönetim"', '"yönetici"', '"yönetime"', '"C-level"', "`--yonetim`"):
+            self.assertIn(soz, adim4.split("--haber simdi` when", 1)[0], soz)
+        self.assertIn('`--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver"', adim4)
+        adim2 = paylas.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
+        self.assertIn("references/gizli.md", adim2)
+        self.assertIn("references/pr-listesi.md", adim2)
+        self.assertIn("only when explicitly asked", adim2)
+        adim3 = paylas.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
+        self.assertIn("never open it", adim3)
+        self.assertIn("most recently created, wrote,\n     exported or published", adim3)
+        self.assertIn("Write that\n     text verbatim to `~/.tf-bilgi/gecici/paylas-<YYYYMMDD-HHMMSS>.md`", adim3)
+        for yol in (GIZLI, PR_LISTESI):
+            self.assertTrue(yol.is_file(), yol)
+        pr = metin(PR_LISTESI)
+        self.assertIn("TFB prler", pr)
+        self.assertIn("`~/.tf-bilgi/gecici/pr-listesi-<YYYYMMDD-HHMMSS>.md`", pr)
+        self.assertIn("Run the single `hizli` command of SKILL.md step 4 with `--ek <that file>`", pr)
+
+    def test_paylas_allowed_tools_are_minimal(self):
+        izinler = re.search(r"(?ms)^allowed-tools:\n(.*?)^---", metin(PAYLAS)).group(1)
+        self.assertEqual(izinler.splitlines(), ['  - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)',
+                                                "  - Write(~/.tf-bilgi/gecici/**)",
+                                                "  - Read(${CLAUDE_PLUGIN_ROOT}/skills/paylas/references/**)"])
+
+    def test_secrets_never_block_only_the_kopru_key(self):
+        """7 Kas kararı: sır ve kişisel veri paylaşımı engellemez; yalnız köprü anahtarı ve ~/.tf-bilgi."""
+        paylas, toplu = metin(PAYLAS), metin(PLUGIN / "skills" / "toplu-paylas" / "SKILL.md")
+        self.assertIn("Secrets and personal\ndata do not block", paylas)
+        self.assertIn("only the köprü key itself and files\nunder `~/.tf-bilgi` are refused", paylas)
+        self.assertIn("**Secrets never block**", toplu)
+        self.assertIn("Only the TF Bilgi köprü key\n  (`tfb1.…`) and files under `~/.tf-bilgi` are never shared", toplu)
+        self.assertIn("Personal data never blocks and is never masked", toplu)
+        for govde in [metin(md) for md in SKILLS] + [metin(GIZLI)]:
+            for eski in ("Secrets in the user's input block the share", "A secret is never shared",
+                         "refuse the whole share", "No question, no masking, no waiver", "sır varsa paylaşmaz"):
+                self.assertNotIn(eski, govde, eski)
         siniflama = metin(PLUGIN / "skills" / "toplu-paylas" / "references" / "siniflama.md")
         self.assertIn("Kişisel veri engellemez", siniflama)
+        self.assertIn("**Sır paylaşımı engellemez**", siniflama)
+        self.assertNotIn('"güvenlik ayrıntısı"', siniflama)
         self.assertNotIn('"influencer kimliği"', siniflama)  # artık ham engeli değil
 
-    def test_secret_rule_is_one_rule_and_user_text_is_scanned_before_writing(self):
-        """Review (.github#12): kullanıcının sözleri ve ekler D2'den (ham-ekle) önce taranır; taslaktaki bulgu ret değil."""
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        ana = paylas.split("## Gizli mode", 1)[0]
-        adim7 = ana.split("\n7. ", 1)[1].split("\nThen continue with D1", 1)[0]
-        self.assertIn("`TFB kb tara <D>/govde.md --json`", adim7)
-        self.assertLess(ana.index("TFB kb tara <D>/govde.md"), ana.index("\nD2. "))
-        self.assertLess(ana.index("TFB kb tara <D>/govde.md"), ana.index("TFB kb ham-ekle <file>"))
-        kural = ana.split("- **Secrets in the user's input block the share.**", 1)[1].split("\n- **", 1)[0]
-        self.assertIn("**your own draft**", kural)
-        self.assertIn("never refuse for it", kural)
-        d3 = ana.split("\nD3. ", 1)[1].split("\nD4. ", 1)[0]
-        self.assertIn("never refuse for it", d3)
-        self.assertNotIn("refuse the whole share", d3)
-
-    def test_direct_receipt_offers_undo_only_with_a_key(self):
-        """Review (.github#12): geri-al köprü anahtarı ister; anahtarsız doğrudan makbuz komutu vaat etmez."""
-        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        d6 = paylas.split("\nD6. ", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("`geri_al: true`", d6)
-        self.assertIn("geri almak için köprü anahtarı", d6)
-        self.assertIn("never offer the command then", d6)
-        self.assertNotRegex(d6.split("\n")[1], r"geri almak için: /paylas geri-al <id>`\.$")  # makbuz satırı koşulsuz değil
-        self.assertIn("`geri_al`", paylas.split("\n3. **Prepare.**", 1)[1].split("\n4. ", 1)[0])
+    def test_readme_describes_the_instant_share(self):
         readme = (PLUGIN.parents[1] / "README.md").read_text(encoding="utf-8")
-        self.assertIn("köprü anahtarı ister", readme)
-        self.assertNotIn("doğrudan yolda girdi kimliği); `/paylas geri-al <kod>` geri alır", readme)
+        for parca in ("eneskrblt/tf-bilgi-yonetim", "`00-gelen/`", "Git Data API", "geri-al",
+                      "Sır ve kişisel veri paylaşımı engellemez"):
+            self.assertIn(parca, readme, parca)
+        self.assertNotIn("Teamfluencer-Dev/tf-bilgi-yonetim", readme)
+        self.assertNotIn("Sır engellenir", readme)
 
     def test_kur_status_never_stops_installation(self):
         bilgi = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md")
@@ -225,7 +251,7 @@ class SkillShellHygieneTest(unittest.TestCase):
                     self.assertNotRegex(satir, r"TFB kur[^`|]*(tfb1|')", satir)
 
     def test_gonder_gets_only_paths(self):
-        for md in SKILLS:
+        for md in SKILLS + REFERANSLAR:
             for cagri in re.findall(r"TFB gonder[^`]*", metin(md)):
                 self.assertNotRegex(cagri, r"--(baslik|tldr|not|mesaj|alici|kisi)\b", cagri)
                 for deger in re.findall(r"--(?:taslak|metin|govde|ek) ('?[^ \]']+'?)", cagri):

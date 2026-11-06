@@ -1,4 +1,4 @@
-# Türler ve gövde kuralları (/paylas)
+# Türler ve gövde kuralları (/paylas gizli, /toplu-paylas)
 
 `kb taslak` çıktısındaki gövde (deponun `sablonlar/<tur>.md` dosyası) esastır. Bu
 dosya yalnız tür seçimini, uzunlukları ve devir alt şablonlarının ne zaman
@@ -9,7 +9,7 @@ seçileceğini anlatır. Şablon ile bu dosya çelişirse şablon kazanır.
 | Kullanıcı ne diyor / içerik ne | `tur` | Not |
 |---|---|---|
 | "geldiğim nokta", durum, ilerleme, haftalık güncelleme | `durum` | `saglik` zorunlu (yesil/sari/kirmizi) |
-| PR listesi, merge sırası, "PR'ları devrediyorum" | `pr-listesi` | SKILL.md "PR list mode" |
+| PR listesi, merge sırası, "PR'ları devrediyorum" | `pr-listesi` | `references/pr-listesi.md` |
 | devir, "X'e devrediyorum", izin öncesi devir, CS'e değişiklik brifi, hesap devri | `devir` | `istek` zorunlu; alt şablon aşağıda |
 | "karar lazım", seçenekler, alınmış karar | `karar` | `istek` zorunlu (alınmış kararda `tip: BILGI`) |
 | analiz, rapor, metrik, kök neden, olay raporu | `analiz` | |
@@ -97,9 +97,9 @@ Adım adım SOP gerekiyorsa ayrı bir `nasil-yapilir` girdisi olur (numaralı ad
 
 ## `pr-listesi`
 
-Tablo (SKILL.md "PR list mode") + **Nasıl doğrulanır** + **Bilinen tuzaklar**. Tek ekran.
+Tablo (`references/pr-listesi.md`) + **Nasıl doğrulanır** + **Bilinen tuzaklar**. Tek ekran.
 
-## Gizli (`gizli: true`, SKILL.md "Gizli mode")
+## Gizli (`gizli: true`, `references/gizli.md`)
 
 Belge okunmaz, depoya girmez; Drive'da yalnız alıcılarla paylaşılır. Gövde, `tldr`,
 `ham` ve `ham_notu` `kb taslak --gizli`'nin bastığı sabit metindir ve elle değişmez

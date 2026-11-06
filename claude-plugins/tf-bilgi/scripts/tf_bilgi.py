@@ -74,6 +74,20 @@ plugin PR that adds a hash links that KB PR and its head SHA (KB CLAUDE.md §12)
                                  Read-only: the page's comments, oldest first, names
                                  from kisiler.json `github`. Gizli: no public page.
 
+Hızlı paylaşım (/paylas), 0.7.0:
+
+  hizli [--yonetim] [--haber simdi] [--ek PATH]...   (the user's own words on stdin, may be empty)
+                                 One command, no questions, no draft: the files and the words
+                                 (govde.md) go to the inbox, the librarian classifies them at
+                                 its next run. A writer (push permission, checked with gh and
+                                 cached for a day in ~/.tf-bilgi/hizli.json) gets one commit on
+                                 main through the GitHub Git Data API (no clone, no kb.py):
+                                 00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<rnd6>/ (files, govde.md,
+                                 meta.json). Otherwise a köprü key sends it through the bridge
+                                 (ekip only). Secrets and personal data do not block; only the
+                                 köprü key itself and files under ~/.tf-bilgi (except gecici/)
+                                 are refused. Prints {kod, alan, yol, dosyalar, satir, notlar}.
+
 Köprü (bridge) path, 0.6.0. A person with a köprü key (~/.tf-bilgi/anahtar, one
 pasted string `tfb1.<deployment>.<secret>`) works without GitHub: the TF Bilgi
 bridge (a Google Apps Script web app) writes shares into the Google Drive inbox
@@ -86,11 +100,15 @@ köprü if the key file exists, else the direct (GitHub) path above.
                                  with the bridge, save it 0600 and delete F. No option:
                                  status. --sil: remove the key.
   gonder --taslak F.json [--metin F.md] [--govde F.md] [--ek PATH]...
-                                 Köprü share: validate the draft (contract §5), scan every
-                                 file with the pinned kb.py (secret → refused; personal
-                                 data → kisisel_veri), upload in chunks, print a one-line
+                                 Köprü share (/toplu-paylas, gizli): validate the draft
+                                 (contract §5), scan every file with the pinned kb.py only to
+                                 tag personal data (kisisel_veri; nothing is refused for a
+                                 secret since 0.7.0), upload in chunks, print a one-line
                                  receipt with the code for `geri-al`.
-  geri-al HEDEF                  Withdraw a köprü share (G-…) or one's own entry (B-…).
+  geri-al HEDEF                  Withdraw a share (G-…) or one's own entry (B-…). A writer's
+                                 own hızlı share still in 00-gelen/ is deleted in one commit;
+                                 once filed, a geri-al record is written for the librarian.
+                                 Otherwise through the bridge (köprü key).
   oku YOL...                     Köprü: allow-listed repo files (gizli entries only for
                                  their recipients).
   ara SORGU...                   Köprü: search entries.
@@ -109,13 +127,16 @@ import base64
 import datetime
 import hashlib
 import http.client
+import io
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -126,7 +147,8 @@ ORG = "Teamfluencer-Dev"
 DAL = "main"
 ALANLAR = {
     "ekip": {"klasor": "tf-bilgi", "ortam": "TF_BILGI_UZAK_EKIP", "uzak": f"{ORG}/tf-bilgi"},
-    "yonetim": {"klasor": "tf-bilgi-yonetim", "ortam": "TF_BILGI_UZAK_YONETIM", "uzak": f"{ORG}/tf-bilgi-yonetim"},
+    # Yönetim deposu org'da değil, Enes'in hesabında (7 Kas kararı).
+    "yonetim": {"klasor": "tf-bilgi-yonetim", "ortam": "TF_BILGI_UZAK_YONETIM", "uzak": "eneskrblt/tf-bilgi-yonetim"},
 }
 SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 GITHUB_URL_RE = re.compile(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/*$")
@@ -399,25 +421,35 @@ def baglanti(uzak, yol):
     return f"https://github.com/{uzak}/blob/{DAL}/{urllib.parse.quote(yol, safe='/')}"
 
 
-def kisileri_oku(kok):
-    try:
-        data = json.loads((kok / "kisiler.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        return {}
+def kisiler_coz(data):
     kisiler = data.get("kisiler") if isinstance(data, dict) else None
     # kb.py gibi: nesne olmayan kayıt (ör. null) kişi sayılmaz
     return {k: v for k, v in kisiler.items() if isinstance(v, dict)} if isinstance(kisiler, dict) else {}
 
 
-def kisi_bul(kok, notlar):
-    """gh login ↔ kisiler.json `github` > TF_BILGI_KISI > git user.email ↔ `eposta` > None.
+def kisileri_oku(kok):
+    try:
+        data = json.loads((kok / "kisiler.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+    return kisiler_coz(data)
 
-    TF_BILGI_KISI yalnız gh girişi bir kişiye eşlenemiyorsa geçerlidir; eşlenen kişiyle çelişirse durur
-    (başkası adına paylaşmayı önler). Bu bir hata önleyicidir, kötü niyetli yazara karşı koruma değildir."""
+
+def kisi_bul(kok, notlar):
+    """Önbellek klonunun kisiler.json'una göre kişi (kisi_eslestir); git e-postası klonun ayarından."""
     kisiler = kisileri_oku(kok)
     if not kisiler:
         notlar.append("kisiler.json okunamadı; kim olduğunuz otomatik bulunamadı.")
-    login = gh_login()
+    return kisi_eslestir(kisiler, gh_login(), notlar,
+                         lambda: git(kok, "config", "user.email", check=False).stdout)
+
+
+def kisi_eslestir(kisiler, login, notlar, eposta_oku):
+    """gh login ↔ kisiler.json `github` > TF_BILGI_KISI > git user.email ↔ `eposta` > (None, None).
+
+    TF_BILGI_KISI yalnız gh girişi bir kişiye eşlenemiyorsa geçerlidir; eşlenen kişiyle çelişirse durur
+    (başkası adına paylaşmayı önler). Bu bir hata önleyicidir, kötü niyetli yazara karşı koruma değildir.
+    `eposta_oku`: git e-postasını yalnız gerekince okuyan fonksiyon."""
     gh_kisi = None
     if login:
         for anahtar in sorted(kisiler):
@@ -434,7 +466,7 @@ def kisi_bul(kok, notlar):
         notlar.append(f"TF_BILGI_KISI='{ortam}' kisiler.json'da yok; diğer yollarla arandı.")
     if gh_kisi:
         return gh_kisi, "github"
-    eposta = git(kok, "config", "user.email", check=False).stdout.strip().lower()
+    eposta = (eposta_oku() or "").strip().lower()
     if eposta:
         for anahtar in sorted(kisiler):
             if str(kisiler[anahtar].get("eposta") or "").lower() == eposta:
@@ -2250,16 +2282,26 @@ def taslak_dogrula(ham, kisiler, ben):
     if not isinstance(ham, dict):
         raise Stop("Taslak bir JSON nesnesi olmalı.")
     sorunlar, notlar, t = [], [], {}
-    bilinmeyen = sorted(set(ham) - set(TASLAK_ANAHTARLARI))
+    bilinmeyen = sorted(set(ham) - set(TASLAK_ANAHTARLARI) - {"hizli"})
     if bilinmeyen:
         notlar.append("taslakta bilinmeyen alan atıldı: " + ", ".join(bilinmeyen))
+    # hizli (0.7.0, /paylas hizli): taslak boştur; türü, başlığı, özeti, konuyu ve alıcıları kütüphaneci govde.md ve
+    # eklerden çıkarır. Yalnız bu taslakta tur boş olabilir ve haber istek olmadan gelir (alıcıyı notta kütüphaneci bulur).
+    hizli_ = ham.get("hizli", False)
+    if not isinstance(hizli_, bool):
+        sorunlar.append("hizli true ya da false olmalı")
+        hizli_ = False
     gizli = ham.get("gizli", False)
     if not isinstance(gizli, bool):
         sorunlar.append("gizli true ya da false olmalı")
         gizli = False
+    if hizli_ and gizli:
+        sorunlar.append("hizli taslak gizli olamaz")
     t["gizli"] = gizli
     tur = ham.get("tur")
-    if tur is not None and tur not in TURLER:
+    if hizli_ and tur in (None, ""):
+        tur = ""
+    elif tur is not None and tur not in TURLER:
         sorunlar.append(f"tur geçersiz: {tur!r}")
     t["tur"] = tur
     for alan, azami in (("baslik", 40 if gizli else 120), ("tldr", 400)):
@@ -2316,7 +2358,7 @@ def taslak_dogrula(ham, kisiler, ben):
     haber = ham.get("haber")
     if haber not in (None, "hemen", "simdi"):
         sorunlar.append(f"haber geçersiz: {haber!r} (null, hemen, simdi)")
-    elif haber and istek is None:
+    elif haber and istek is None and not hizli_:
         sorunlar.append("haber yalnız istek varken yazılır")
     t["haber"] = haber
     kv = ham.get("kisisel_veri", False)
@@ -2380,6 +2422,8 @@ def taslak_dogrula(ham, kisiler, ben):
         sorunlar.append("notlar en çok 5 kısa metin (≤200)")
         nt = []
     t["notlar"] = [_duz_metin(x) for x in nt]
+    if hizli_:
+        t = {"hizli": True, **t}  # yalnız hızlı taslakta gider (köprü sözleşmesi: diğer taslaklarda anahtar yok)
     if sorunlar:
         raise Stop("Taslak geçersiz, hiçbir şey gönderilmedi: " + "; ".join(sorunlar))
     return t, notlar
@@ -2388,8 +2432,10 @@ def taslak_dogrula(ham, kisiler, ben):
 # --- köprü: gönderim ---
 
 def kopru_dosya_adi(ad, kullanilan):
-    """Ek adı: ASCII, `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`, ayrılmış adlar ve tekrar yok."""
-    ad = Path(ad).name.translate(_TR_ASCII)
+    """Ek adı: ASCII, `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`, ayrılmış adlar ve tekrar yok. Türkçe harfler çevrilir
+    (macOS'un ayrık NFD biçimi de), diğer aksanlı harfler aksansız hâline iner."""
+    ad = unicodedata.normalize("NFC", Path(ad).name).translate(_TR_ASCII)
+    ad = "".join(c for c in unicodedata.normalize("NFKD", ad) if not unicodedata.combining(c))
     nokta = ad.rfind(".")
     kok, uz = (ad[:nokta], ad[nokta + 1:]) if nokta > 0 else (ad, "")
     kok = re.sub(r"[^A-Za-z0-9._-]+", "-", kok).strip(".-_")[:80] or "ek"
@@ -2476,65 +2522,82 @@ def gonder(argv):
                 continue
             dosyalar.append((ad, yol, gorunen))
             kullanilan.add(ad)
-    onbellek = onbellek_koku().resolve()
-    gecici_kok = gecici_dizin().resolve()
     for ek in args.ek:
-        yol = Path(ek).expanduser()
-        if not yol.is_absolute():
-            raise Stop(f"Ek mutlak yol olmalı: {ek}")
-        if not yol.is_file():
-            raise Stop(f"Ek bulunamadı: {ek}")
-        gercek = yol.resolve()
-        # ~/.tf-bilgi'de köprü anahtarı, depo klonları ve köprü aynası durur: paylaşılmaz. Tek istisna gecici/: orada
-        # bu çalıştırmanın hazırlık kopyaları durur (/toplu-paylas'ın kaynak.<uz> dosyaları); anahtar oraya
-        # kopyalanırsa aşağıdaki içerik taraması (anahtar_icerir) yakalar.
-        if (gercek == onbellek or onbellek in gercek.parents) and gecici_kok not in gercek.parents:
-            raise Stop(f"{yol.name}: TF Bilgi'nin kendi klasöründeki ({onbellek}) dosyalar paylaşılmaz (köprü anahtarı, "
-                       "depo klonları ve köprü aynası orada durur). Hiçbir şey gönderilmedi.")
+        yol, gercek = ek_denetle(ek)
         dosyalar.append((kopru_dosya_adi(yol.name, kullanilan), gercek, yol.name))
-    if len(dosyalar) > sinir["dosya_azami_sayi"]:
-        raise Stop(f"Bir paylaşımda en çok {sinir['dosya_azami_sayi']} dosya gider ({len(dosyalar)} verildi); "
-                   "ikiye böl.")
+    boyut_denetle(dosyalar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])
+    anahtar_denetle([("taslak.json", taslak_yolu, "taslak")] + dosyalar)
+    # 7 Kas kararı: sır ve kişisel veri paylaşımı engellemez (özel depo, iç kullanım). Pinli kb.py taraması yalnız
+    # kişisel veri etiketi (kisisel_veri) için yapılır; bulgu, taranamayan dosya ya da kb.py'nin hata çıkışı hiçbir şeyi
+    # durdurmaz.
+    kisisel = False
+    for ad, yol, gorunen in [("taslak.json", taslak_yolu, "taslak (başlık/özet)")] + dosyalar:
+        cikis, bulgular, _ = kopru_tara(kok, yol)
+        kisisel = kisisel or (cikis == 3 and any(b.get("tur") == "kisisel" for b in bulgular))
+    taslak["kisisel_veri"] = taslak["kisisel_veri"] or kisisel
+    kod, bas, bit, ozetler = kopru_gonder(taslak, dosyalar, sinir)
+    dosyalama = bit.get("dosyalama") or bas.get("dosyalama")
+    return {"kod": kod, "kayit": bit.get("kayit") or bas.get("kayit"), "dosyalama": dosyalama,
+            "dosyalar": [{"ad": o["ad"], "boyut": o["boyut"]} for o in ozetler], "kisisel_veri": taslak["kisisel_veri"],
+            "gizli": taslak["gizli"], "satir": kopru_makbuz(kod, taslak, dosyalama, kisiler, taslak["kisisel_veri"]),
+            "notlar": notlar}
+
+
+def ek_denetle(ek):
+    """Paylaşılacak dosya: mutlak yol, var olan dosya; ~/.tf-bilgi (köprü anahtarı, depo klonları, köprü aynası,
+    önbellek) paylaşılmaz. Tek istisna gecici/ (hazırlık kopyaları, /paylas'ın yazdığı not dosyaları); oraya ya da
+    ~/.tf-bilgi'nin herhangi bir yerine giden bağlantı (symlink) da reddedilir. Anahtar kopyalanırsa içerik denetimi
+    (anahtar_denetle) yakalar. → (verilen yol, gerçek yol)."""
+    yol = Path(ek).expanduser()
+    if not yol.is_absolute():
+        raise Stop(f"Ek mutlak yol olmalı: {ek}")
+    if yol.is_dir():
+        raise Stop(f"{yol.name} bir klasör; klasörü /toplu-paylas ile paylaş. Hiçbir şey gönderilmedi.")
+    if not yol.is_file():
+        raise Stop(f"Ek bulunamadı: {ek}")
+    onbellek = onbellek_koku().resolve()
+    gecici_kok = (onbellek / "gecici").resolve()
+    gercek = yol.resolve()
+    if (gercek == onbellek or onbellek in gercek.parents) and (yol.is_symlink() or gecici_kok not in gercek.parents):
+        raise Stop(f"{yol.name}: TF Bilgi'nin kendi klasöründeki ({onbellek}) dosyalar paylaşılmaz (köprü anahtarı, "
+                   "depo klonları ve köprü aynası orada durur). Hiçbir şey gönderilmedi.")
+    return yol, gercek
+
+
+def boyut_denetle(dosyalar, dosya_azami, toplam_azami, sayi_azami=None):
+    """dosyalar: [(ad, kaynak (yol ya da bayt), görünen ad)]. Sınır aşılırsa hiçbir şey gönderilmeden durur."""
+    if sayi_azami and len(dosyalar) > sayi_azami:
+        raise Stop(f"Bir paylaşımda en çok {sayi_azami} dosya gider ({len(dosyalar)} verildi); ikiye böl.")
     toplam = 0
-    for ad, yol, gorunen in dosyalar:
-        boyut = yol.stat().st_size
+    for _, kaynak, gorunen in dosyalar:
+        boyut = len(kaynak) if isinstance(kaynak, bytes) else kaynak.stat().st_size
         toplam += boyut
-        if boyut > sinir["dosya_azami_bayt"]:
-            raise Stop(f"{gorunen} çok büyük ({boyut // 1048576} MB; en çok {sinir['dosya_azami_bayt'] // 1048576} MB). "
+        if boyut > dosya_azami:
+            raise Stop(f"{gorunen} çok büyük ({boyut // 1048576} MB; en çok {dosya_azami // 1048576} MB). "
                        "Hiçbir şey gönderilmedi.")
-    if toplam > sinir["kayit_azami_bayt"]:
-        raise Stop(f"Dosyaların toplamı çok büyük (en çok {sinir['kayit_azami_bayt'] // 1048576} MB); ikiye böl.")
-    # Köprü anahtarı hiçbir dosyayla gitmez (paylaşılırsa depoyu okuyan herkes o kişi adına köprüyü kullanabilirdi).
-    anahtarli = [gorunen for _, yol, gorunen in [("taslak.json", taslak_yolu, "taslak")] + dosyalar if anahtar_icerir(yol)]
+    if toplam > toplam_azami:
+        raise Stop(f"Dosyaların toplamı çok büyük (en çok {toplam_azami // 1048576} MB); ikiye böl. Hiçbir şey "
+                   "gönderilmedi.")
+
+
+def anahtar_denetle(dosyalar):
+    """Köprü anahtarı hiçbir dosyayla gitmez (paylaşılırsa depoyu okuyan herkes o kişi adına köprüyü kullanabilirdi).
+    Yalnız dosyanın adı söylenir, anahtar asla."""
+    anahtarli = [gorunen for _, kaynak, gorunen in dosyalar
+                 if (ANAHTAR_ARA_RE.search(kaynak.decode("utf-8", "replace")) if isinstance(kaynak, bytes)
+                     else anahtar_icerir(kaynak))]
     if anahtarli:
         raise Stop(f"Köprü anahtarı paylaşılmaz: {', '.join(anahtarli)} içinde bir TF Bilgi köprü anahtarı (tfb1.…) var. "
                    "Çıkarıp tekrar dene; anahtar paroladır, kimseyle paylaşma. Hiçbir şey gönderilmedi.")
-    # Tarama: taslak (başlık, özet, notlar) ve her dosya; gizlide yalnız taslak (belge hiç okunmaz).
-    sirlar, kisisel, taranamayan = [], False, []
-    for ad, yol, gorunen in [("taslak.json", taslak_yolu, "taslak (başlık/özet)")] + dosyalar:
-        cikis, bulgular, neden = kopru_tara(kok, yol)
-        if cikis == 5:
-            taranamayan.append(f"{gorunen} ({neden or 'metin yok'})")
-        elif cikis not in (0, 3):
-            raise Stop(f"{gorunen} taranamadı (kb.py tara çıkış {cikis}); hiçbir şey gönderilmedi.")
-        for b in bulgular:
-            if b.get("tur") == "sir":
-                yer = f" (satır {b['satir']})" if isinstance(b.get("satir"), int) else ""
-                sirlar.append(f"{gorunen}: {b.get('ad') or 'sır'}{yer}")
-            elif b.get("tur") == "kisisel":
-                kisisel = True
-    if sirlar:
-        raise Stop("Paylaşmadım: sır bulundu — " + "; ".join(sirlar[:8]) + ". Sırrı (şifre, anahtar, token, bağlantı "
-                   "dizesi) çıkarıp tekrar /paylas yaz; değeri burada da tekrar etme. Hiçbir şey gönderilmedi.")
-    if taranamayan:
-        raise Stop("Taranamayan dosya köprüden gönderilmez: " + "; ".join(taranamayan) + ". Görsel, arşiv ya da "
-                   "metin katmanı olmayan PDF'i çıkar (ya da metinli bir sürümünü ver) ve tekrar dene. Hiçbir şey "
-                   "gönderilmedi.")
-    taslak["kisisel_veri"] = taslak["kisisel_veri"] or kisisel
+
+
+def kopru_gonder(taslak, dosyalar, sinir):
+    """Köprü kaydı (sözleşme §4): baslat → parca* → bitir. dosyalar: [(köprüdeki ad, kaynak, görünen ad)]; kaynak yerel
+    yol ya da bayt. Yarıda kalırsa kaydı geri-al ile durdurmayı dener. → (kod, baslat yanıtı, bitir yanıtı, özetler)."""
     ozetler = []
-    for ad, yol, _ in dosyalar:
-        ozetler.append({"ad": ad, "boyut": yol.stat().st_size,
-                        "sha256": hashlib.sha256(yol.read_bytes()).hexdigest()})
+    for ad, kaynak, _ in dosyalar:
+        veri = kaynak if isinstance(kaynak, bytes) else kaynak.read_bytes()
+        ozetler.append({"ad": ad, "boyut": len(veri), "sha256": hashlib.sha256(veri).hexdigest()})
     bas = kopru_cagir("baslat", {"taslak": taslak, "dosyalar": ozetler})
     kod = str(bas.get("kod") or "")
     if not KOD_RE.match(kod):
@@ -2542,8 +2605,8 @@ def gonder(argv):
     parca_bayt = bas.get("parca_bayt") if isinstance(bas.get("parca_bayt"), int) and bas["parca_bayt"] > 0 \
         else sinir["parca_bayt"]
     try:
-        for ad, yol, _ in dosyalar:
-            kopru_yukle(kod, ad, yol, parca_bayt)
+        for ad, kaynak, _ in dosyalar:
+            kopru_yukle(kod, ad, kaynak, parca_bayt)
         bit = kopru_bitir(kod)
     except Stop as e:
         try:
@@ -2552,11 +2615,7 @@ def gonder(argv):
         except Stop:
             durum = f"kaydı durduramadım: gerekirse `/paylas geri-al {kod}` yaz"
         raise Stop(f"Gönderim yarıda kaldı: {e} — {durum}. Tekrar dene.")
-    dosyalama = bit.get("dosyalama") or bas.get("dosyalama")
-    return {"kod": kod, "kayit": bit.get("kayit") or bas.get("kayit"), "dosyalama": dosyalama,
-            "dosyalar": [{"ad": o["ad"], "boyut": o["boyut"]} for o in ozetler], "kisisel_veri": taslak["kisisel_veri"],
-            "gizli": taslak["gizli"], "satir": kopru_makbuz(kod, taslak, dosyalama, kisiler, taslak["kisisel_veri"]),
-            "notlar": notlar}
+    return kod, bas, bit, ozetler
 
 
 def kopru_bitir(kod):
@@ -2577,10 +2636,10 @@ def kopru_bitir(kod):
         time.sleep(KOPRU_BEKLE)
 
 
-def kopru_yukle(kod, ad, yol, parca_bayt):
-    """Dosyayı sırayla parça parça gönderir (son parça kısa; boş dosya tek boş parça)."""
-    boyut = yol.stat().st_size
-    with open(yol, "rb") as dosya:
+def kopru_yukle(kod, ad, kaynak, parca_bayt):
+    """Dosyayı (yol ya da bayt) sırayla parça parça gönderir (son parça kısa; boş dosya tek boş parça)."""
+    boyut = len(kaynak) if isinstance(kaynak, bytes) else kaynak.stat().st_size
+    with (io.BytesIO(kaynak) if isinstance(kaynak, bytes) else open(kaynak, "rb")) as dosya:
         sira = 0
         while True:
             veri = dosya.read(parca_bayt)
@@ -2593,13 +2652,21 @@ def kopru_yukle(kod, ad, yol, parca_bayt):
 
 def geri_al(argv):
     parser = argparse.ArgumentParser(prog="tf_bilgi.py geri-al")
-    parser.add_argument("hedef", help="G-xxxxxx (köprü kodu) ya da kendi girdi kimliğin")
+    parser.add_argument("hedef", help="G-xxxxxx (makbuz kodu) ya da kendi girdi kimliğin")
     hedef = parser.parse_args(argv).hedef.strip()
     if not (KOD_RE.match(hedef) or GIRDI_ID_RE.match(hedef)):
         raise Stop(f"Geri alınacak kod anlaşılmadı: {hedef!r} (örnek: G-4k9x2m ya da B-20261106-ayse-01).")
+    if KOD_RE.match(hedef):
+        sonuc = geri_al_yazan(hedef)  # yazanın hızlı kaydı: GitHub'dan; yazan değilse None
+        if sonuc is not None:
+            return sonuc
     if not anahtar_yolu().is_file():
         raise Stop("Geri alma köprü üzerinden gider (kütüphaneci girdiyi iptal eder) ve köprü anahtarın yok. "
                    + ANAHTAR_YOK)
+    return kopru_geri_al(hedef)
+
+
+def kopru_geri_al(hedef):
     r = kopru_cagir("geri-al", {"hedef": hedef})
     if r.get("sonuc") == "durduruldu":
         satir = f"Geri alındı: {hedef} · yükleme durduruldu, hiçbir şey dosyalanmayacak."
@@ -2607,7 +2674,478 @@ def geri_al(argv):
         satir = (f"Geri alma isteği kaydedildi: {hedef} · kütüphaneci {r.get('dosyalama') or 'bir sonraki'} turunda "
                  "işler (dosyalanmadıysa kayıt atlanır, dosyalandıysa girdi iptal olur).")
     return {"hedef": hedef, "sonuc": r.get("sonuc"), "kod": r.get("kod"), "kayit": r.get("kayit"),
-            "dosyalama": r.get("dosyalama"), "satir": satir}
+            "dosyalama": r.get("dosyalama"), "yol": "kopru", "satir": satir}
+
+
+# --- hızlı paylaşım (0.7.0): `/paylas` tek komut, sorusuz; sınıflamayı kütüphaneci yapar ---
+#
+# 7 Kas kararı (Enes): /paylas Slack'ten ya da WhatsApp'tan hızlı olmalı. Claude belgeyi okumaz, özetlemez, taslak
+# yazmaz, soru sormaz; `hizli` dosyaları ve kullanıcının kendi sözlerini (govde.md) gelen kutusuna bırakır. Türü, konuyu,
+# başlığı, özeti ve alıcıları kütüphaneci bir sonraki turunda çıkarır. Depoya yazabilen (push yetkisi) GitHub Git Data
+# API'siyle tek commit atar (klon yok, kb.py yok): `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kimlik>/` (dosyalar, govde.md,
+# meta.json). Yazamayan köprü anahtarıyla köprüden gönderir (yalnız ekip). Sır ve kişisel veri paylaşımı engellemez
+# (özel depo, iç kullanım); yalnız sistemin kendi kimlik bilgileri (köprü anahtarı, ~/.tf-bilgi) paylaşılmaz.
+
+GELEN = "00-gelen"
+HIZLI_DOSYA_AZAMI = 50 * 1024 * 1024
+HIZLI_KAYIT_AZAMI = 100 * 1024 * 1024
+HIZLI_DENEME = 3          # ref ileri sarılamazsa (arada başkası push etti) baştan okuyup en çok bu kadar yeniden dener
+HIZLI_BEKLE = 0.5         # saniye, denemeler arası (testler 0 yapar)
+ONBELLEK_OMRU = 86400     # saniye: push yetkisi ve kisiler.json önbelleği bir gün
+GECMIS_AZAMI = 200        # yerel gönderim geçmişi (geri-al kodun hangi depoda olduğunu bilsin)
+TR_SAAT = datetime.timezone(datetime.timedelta(hours=3))     # İstanbul (2016'dan beri yaz saati yok)
+TUR_SAATLERI = ((9, 5), (11, 5), (13, 5), (15, 5), (17, 5))  # kütüphaneci `dosyala` turları, hafta içi (köprüyle aynı)
+KAYIT_ADI_RE = re.compile(r"^\d{8}-\d{6}-([a-z][a-z0-9]*)-([a-z0-9]{6})$")
+HIZLI_YONETIM_KOPRU = ("Yönetim belgesini Slack'te TF Bilgi botuna 'yönetim' yazarak gönder; köprü yalnız ekip alanında "
+                       "çalışır.")
+HIZLI_YOL_YOK = ("Depoya yazma yetkin ve köprü anahtarın yok. En hızlısı: dosyayı Slack'te TF Bilgi botuna DM at. "
+                 "(Anahtar için Enes'e yaz, sonra /bilgi kur.)")
+_KIMLIK_HARFLERI = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+class GhHatasi(Stop):
+    """GitHub REST hatası; `http` durum kodu (bilinmiyorsa None)."""
+
+    def __init__(self, mesaj, http=None):
+        super().__init__(mesaj)
+        self.http = http
+
+
+def gh_api(yontem, yol, govde=None, zaman_asimi=60):
+    """Tek GitHub REST çağrısı (`gh api`) → JSON. Gövde stdin'den JSON (`--input -`, ASCII kaçışlı): belge ve not içeriği
+    hiçbir komut argümanına girmez. Hata GhHatasi; HTTP kodu `gh`'nin hata satırından ("… (HTTP 422)")."""
+    komut = ["gh", "api", yol, "-X", yontem]
+    if govde is not None:
+        komut += ["--input", "-"]
+    proc = sh(komut, check=False, timeout=zaman_asimi, girdi=None if govde is None else json.dumps(govde))
+    if proc.returncode != 0:
+        m = re.search(r"\(HTTP (\d{3})\)", f"{proc.stderr or ''}\n{proc.stdout or ''}")
+        raise GhHatasi(f"GitHub isteği başarısız ({yontem} {yol.split('?', 1)[0]}): "
+                       f"{tek_satir(ayrinti(proc), 300) or 'yanıt yok'}", int(m.group(1)) if m else None)
+    try:
+        return json.loads(proc.stdout) if proc.stdout.strip() else None
+    except ValueError:
+        raise GhHatasi(f"GitHub yanıtı anlaşılamadı ({yontem} {yol.split('?', 1)[0]}).")
+
+
+def _sha_al(veri):
+    sha = veri.get("sha") if isinstance(veri, dict) else None
+    if not isinstance(sha, str) or not sha:
+        raise GhHatasi("GitHub yanıtı anlaşılamadı (sha yok).")
+    return sha
+
+
+# --- hızlı yol: yerel önbellek (~/.tf-bilgi/hizli.json: push yetkisi, kisiler.json, gönderim geçmişi) ---
+
+def hizli_onbellek_yolu():
+    return onbellek_koku() / "hizli.json"
+
+
+def hizli_onbellek():
+    try:
+        veri = json.loads(hizli_onbellek_yolu().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return veri if isinstance(veri, dict) else {}
+
+
+def hizli_onbellek_yaz(veri):
+    """Atomik, yalnız kullanıcıya açık (0600): kisiler.json kopyası iş e-postaları taşır. Yazılamazsa sessiz geçer
+    (önbellek yalnız hız içindir)."""
+    yol = hizli_onbellek_yolu()
+    try:
+        yol.parent.mkdir(parents=True, exist_ok=True)
+        yeni = yol.with_name(yol.name + ".yeni")
+        fd = os.open(str(yeni), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(veri, f, ensure_ascii=False)
+        os.replace(yeni, yol)
+    except OSError:
+        pass
+
+
+def _bolum(ob, ad):
+    if not isinstance(ob.get(ad), dict):
+        ob[ad] = {}
+    return ob[ad]
+
+
+def _taze(kayit):
+    zaman = kayit.get("zaman") if isinstance(kayit, dict) else None
+    return isinstance(zaman, (int, float)) and 0 <= time.time() - zaman < ONBELLEK_OMRU
+
+
+def hizli_yetki(login, slug, yenile=False):
+    """(push yetkisi True/False/None, önbellekten mi). `gh api repos/<slug> --jq .permissions.push` (yazma_yetkisi);
+    kesin yanıt bir gün önbellekte durur, denetlenemeyen (None: ağ, depo yok) yazılmaz."""
+    anahtar = f"{login.lower()}|{slug.lower()}"
+    kayit = _bolum(hizli_onbellek(), "yetki").get(anahtar)
+    if not yenile and _taze(kayit) and isinstance(kayit.get("push"), bool):
+        return kayit["push"], True
+    push = yazma_yetkisi(slug, True)
+    if push is not None:
+        ob = hizli_onbellek()
+        _bolum(ob, "yetki")[anahtar] = {"push": push, "zaman": time.time()}
+        hizli_onbellek_yaz(ob)
+    return push, False
+
+
+def hizli_yetki_unut(login, slug):
+    ob = hizli_onbellek()
+    if _bolum(ob, "yetki").pop(f"{login.lower()}|{slug.lower()}", None) is not None:
+        hizli_onbellek_yaz(ob)
+
+
+def hizli_kisiler(slug, yenile=False):
+    """Deponun kisiler.json'u (GitHub contents API, klon yok; bir gün önbellekte). İçerik bozuksa {}; GitHub hatası
+    (depo yok, erişim yok, ağ) GhHatasi olarak yükselir: "kim olduğun bulunamadı" diye yanlış söylenmesin."""
+    kayit = _bolum(hizli_onbellek(), "kisiler").get(slug.lower())
+    if not yenile and _taze(kayit) and isinstance(kayit.get("kisiler"), dict):
+        return kayit["kisiler"]
+    veri = gh_api("GET", f"repos/{slug}/contents/kisiler.json?ref={DAL}")
+    try:
+        kisiler = kisiler_coz(json.loads(base64.b64decode(veri["content"]).decode("utf-8")))
+    except (KeyError, TypeError, ValueError):
+        return {}
+    ob = hizli_onbellek()
+    _bolum(ob, "kisiler")[slug.lower()] = {"kisiler": kisiler, "zaman": time.time()}
+    hizli_onbellek_yaz(ob)
+    return kisiler
+
+
+def git_eposta():
+    if not which("git"):
+        return ""
+    return sh(["git", "config", "--global", "--get", "user.email"], check=False, timeout=20).stdout
+
+
+def hizli_kisi(slug, login, notlar):
+    """Kişi, deponun kisiler.json'uyla (kisi_eslestir: gh girişi > TF_BILGI_KISI > git e-postası). Önbellekteki kopyada
+    bulunamazsa bir kez taze okunur; yine yoksa durur (depoya yalnız kendi adına yazılır)."""
+    for yenile in (False, True):
+        kisi, _ = kisi_eslestir(hizli_kisiler(slug, yenile), login, notlar if yenile else [], git_eposta)
+        if kisi and not KISI_RE.match(kisi):  # kayıt klasörünün adına girer: yalnız düz kişi anahtarı
+            raise Stop(f"kisiler.json'daki kişi anahtarı geçersiz: {kisi!r}. TF Bilgi sorumlusuna haber ver.")
+        if kisi:
+            return kisi
+    raise Stop(KIM_BILINMIYOR)
+
+
+def gecmise_yaz(kod, alan, yol, slug, klasor):
+    ob = hizli_onbellek()
+    gecmis = _bolum(ob, "gonderilen")
+    gecmis[kod] = {"alan": alan, "yol": yol, "depo": slug, "klasor": klasor, "zaman": time.time()}
+    if len(gecmis) > GECMIS_AZAMI:
+        for eski in sorted(gecmis, key=lambda k: (gecmis[k] or {}).get("zaman") or 0)[:len(gecmis) - GECMIS_AZAMI]:
+            del gecmis[eski]
+    hizli_onbellek_yaz(ob)
+
+
+def gecmisten(kod):
+    kayit = _bolum(hizli_onbellek(), "gonderilen").get(kod)
+    return kayit if isinstance(kayit, dict) else {}
+
+
+# --- hızlı yol: zaman, kimlik, meta.json ---
+
+def an_tr():
+    return simdi().astimezone(TR_SAAT)
+
+
+def sonraki_tur(an):
+    """Kütüphanecinin bir sonraki `dosyala` turu (köprünün dosyalama_ kuralı): şu andan en az 2 dk sonraki hafta içi
+    09:05/11:05/13:05/15:05/17:05 → 'bugün 13:05', 'yarın 09:05' ya da 'Pzt 09:05'."""
+    an = an.astimezone(TR_SAAT)
+    esik = an + datetime.timedelta(minutes=2)
+    for g in range(10):
+        gun = an.date() + datetime.timedelta(days=g)
+        if gun.weekday() >= 5:
+            continue
+        for saat, dakika in TUR_SAATLERI:
+            if datetime.datetime(gun.year, gun.month, gun.day, saat, dakika, tzinfo=TR_SAAT) >= esik:
+                metin = f"{saat:02d}:{dakika:02d}"
+                return (f"bugün {metin}" if g == 0 else f"yarın {metin}" if g == 1
+                        else f"{GUN_KISA[gun.weekday()]} {metin}")
+    return "bir sonraki iş günü 09:05"
+
+
+def yeni_kimlik():
+    return "".join(secrets.choice(_KIMLIK_HARFLERI) for _ in range(6))
+
+
+def gelen_meta(kisi, login, an, alan, kod, dosyalar, not_metni, haber, tur="girdi", konu=None, ek=None):
+    """00-gelen kaydının meta.json'u (anahtarlar ve sıra sözleşmedir; kütüphaneci okur). konu_satiri: notun ilk dolu
+    satırı (≤120), yoksa ilk dosyanın adı; aciklama: notun ilk 5 dolu satırı."""
+    satirlar = [tek_satir(s, 400) for s in not_metni.replace("\r\n", "\n").split("\n")]
+    dolu = [s for s in satirlar if s]
+    if konu is None:
+        konu = tek_satir(dolu[0], 120) if dolu else tek_satir(dosyalar[0] if dosyalar else "", 120)
+    meta = {"kaynak_kanal": "claude-code", "gonderen": kisi, "gonderen_ham": f"github:{login}",
+            "alinma": an.isoformat(timespec="seconds"), "dosyalar": list(dosyalar), "alan": alan, "tur": tur}
+    meta.update(ek or {})
+    meta.update({"mesaj_kimligi": kod, "konu_satiri": konu, "aciklama": "\n".join(dolu[:5]), "haber": haber,
+                 "atlanan_dosyalar": []})
+    return meta
+
+
+def _metin_girdisi(yol, icerik):
+    return {"path": yol, "mode": "100644", "type": "blob", "content": icerik}
+
+
+# --- hızlı yol: GitHub Git Data API (klon yok) ---
+
+def dal_basi(slug):
+    veri = gh_api("GET", f"repos/{slug}/branches/{DAL}")
+    try:
+        return veri["commit"]["sha"], veri["commit"]["commit"]["tree"]["sha"]
+    except (KeyError, TypeError):
+        raise GhHatasi(f"GitHub yanıtı anlaşılamadı ({slug} {DAL} dalı).")
+
+
+def api_commit(slug, hazirla):
+    """`main`'e tek commit, klon olmadan: dal başını oku → ağaç (base_tree) → commit → ref'i force olmadan ileri sar.
+    Arada başkası push ettiyse ref ileri sarılamaz (HTTP 422): dal başı yeniden okunur, en çok HIZLI_DENEME kez yeniden
+    denenir (bloblar yeniden yüklenmez). hazirla(bas) → (ağaç girdileri, commit mesajı) ya da None (yapılacak bir şey
+    kalmadı: commit yok). → commit sha ya da None."""
+    for deneme in range(HIZLI_DENEME + 1):
+        bas, agac = dal_basi(slug)
+        is_ = hazirla(bas)
+        if is_ is None:
+            return None
+        girdiler, mesaj = is_
+        yeni_agac = _sha_al(gh_api("POST", f"repos/{slug}/git/trees", {"base_tree": agac, "tree": girdiler}, 300))
+        commit = _sha_al(gh_api("POST", f"repos/{slug}/git/commits",
+                                {"message": mesaj, "tree": yeni_agac, "parents": [bas]}))
+        try:
+            gh_api("PATCH", f"repos/{slug}/git/refs/heads/{DAL}", {"sha": commit, "force": False})
+            return commit
+        except GhHatasi as e:
+            if e.http != 422 or deneme == HIZLI_DENEME:
+                raise
+        time.sleep(HIZLI_BEKLE)
+
+
+def gelen_klasoru(slug, kisi, kimlik, ref):
+    """00-gelen'de bu kişinin bu kimlikli kaydı (contents API girdisi) ya da None."""
+    try:
+        liste = gh_api("GET", f"repos/{slug}/contents/{GELEN}?ref={ref}")
+    except GhHatasi as e:
+        if e.http == 404:
+            return None
+        raise
+    for oge in liste if isinstance(liste, list) else []:
+        m = KAYIT_ADI_RE.match(str((oge or {}).get("name") or "")) if isinstance(oge, dict) else None
+        if m and oge.get("type") == "dir" and m.group(1) == kisi and m.group(2) == kimlik and oge.get("sha"):
+            return oge
+    return None
+
+
+def gelen_sil(slug, kisi, kimlik, kod):
+    """Dosyalanmamış kaydı (00-gelen/<…>-<kisi>-<kimlik>/) tek commit'le siler. Bulunamazsa False."""
+    def hazirla(bas):
+        klasor = gelen_klasoru(slug, kisi, kimlik, bas)
+        if not klasor:
+            return None
+        agac = gh_api("GET", f"repos/{slug}/git/trees/{klasor['sha']}?recursive=1")
+        girdiler = [{"path": f"{GELEN}/{klasor['name']}/{o['path']}", "mode": o.get("mode") or "100644",
+                     "type": "blob", "sha": None}
+                    for o in ((agac or {}).get("tree") or []) if isinstance(o, dict) and o.get("type") == "blob"]
+        return (girdiler, f"gelen: {kod} geri alındı") if girdiler else None
+    return api_commit(slug, hazirla) is not None
+
+
+def geri_al_kaydi(slug, alan, kisi, login, kod):
+    """Dosyalanmış kayıt için geri-al kaydı (yalnız meta.json): kütüphaneci sonraki turda girdiyi iptal eder."""
+    an, kimlik = an_tr(), yeni_kimlik()
+    yeni = f"G-{kimlik}"
+    klasor = f"{GELEN}/{an:%Y%m%d-%H%M%S}-{kisi}-{kimlik}"
+    meta = gelen_meta(kisi, login, an, alan, yeni, [], "", "hemen", tur="geri-al", konu=f"geri al: {kod}",
+                      ek={"geri_alinan": kod})
+    girdiler = [_metin_girdisi(f"{klasor}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1) + "\n")]
+    api_commit(slug, lambda bas: (girdiler, f"gelen: {yeni} · {kisi} · geri-al {kod}"))
+    return yeni
+
+
+def geri_al_yazan(kod):
+    """Yazanın kendi hızlı kaydı (G-…): 00-gelen'de duruyorsa (dosyalanmadı) klasörü tek commit'le siler; yoksa
+    (dosyalandı) geri-al kaydı yazar. Yazan değilse ya da kod köprüden gittiyse None (köprü akışı sürer)."""
+    zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
+    if zorla == "kopru" or not which("gh"):
+        return None
+    gecmis = gecmisten(kod)
+    if gecmis.get("yol") == "kopru":
+        return None
+    login = gh_login()
+    if not login:
+        return None
+    adaylar = [(alan, slug) for alan, slug in ((a, hizli_slug(a)) for a in ("ekip", "yonetim"))
+               if slug and hizli_yetki(login, slug)[0]]
+    if not adaylar:
+        return None
+    adaylar.sort(key=lambda a: a[0] != gecmis.get("alan"))
+    kimlik, notlar = kod[2:], []
+    try:
+        for alan, slug in adaylar:
+            kisi = hizli_kisi(slug, login, notlar)
+            if gelen_sil(slug, kisi, kimlik, kod):
+                return {"hedef": kod, "sonuc": "silindi", "kod": None, "alan": alan, "yol": "writer",
+                        "satir": f"Geri alındı: {kod} dosyalanmadan önce silindi.", "notlar": notlar}
+        hedef = next((a for a in adaylar if a[0] == gecmis.get("alan")), None)
+        if hedef is None and zorla != "dogrudan" and anahtar_yolu().is_file():
+            try:  # bu makinede gönderilmemiş kod: köprü kaydı olabilir, önce köprüye sor
+                return kopru_geri_al(kod)
+            except KopruHatasi as e:
+                if e.kod != "yok":
+                    raise
+        alan, slug = hedef or adaylar[0]
+        yeni = geri_al_kaydi(slug, alan, hizli_kisi(slug, login, notlar), login, kod)
+    except GhHatasi as e:
+        raise Stop(f"Geri alınamadı: {e} Tekrar dene.")
+    return {"hedef": kod, "sonuc": "kaydedildi", "kod": yeni, "alan": alan, "yol": "writer",
+            "satir": "Geri alma isteği kaydedildi; kütüphaneci sonraki turda girdiyi iptal eder.", "notlar": notlar}
+
+
+# --- hızlı yol: hizli alt komutu ---
+
+def hizli_slug(alan):
+    """GitHub `sahip/ad` (TF_BILGI_UZAK_* ile ezilebilir; GitHub adresi de olur) ya da None (yerel yol: hızlı yazım yok)."""
+    deger, github = uzak_kaynagi(alan)
+    if github:
+        return deger
+    m = GITHUB_URL_RE.search(deger)
+    return m.group(1) if m and not os.path.exists(deger) else None
+
+
+def hizli_yol(alan):
+    """('writer', login, slug, önbellekten) ya da ('kopru', None, None, False); ikisi de yoksa durur. Yazan önce gelir
+    (anahtarı olan yazan da GitHub'a yazar); TF_BILGI_YOL=kopru|dogrudan zorlar."""
+    zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
+    if zorla not in ("", "kopru", "dogrudan"):
+        raise Stop(f"TF_BILGI_YOL anlaşılmadı: {zorla!r} (kopru ya da dogrudan).")
+    anahtar_var = zorla != "dogrudan" and anahtar_yolu().is_file()
+    slug = hizli_slug(alan)
+    if zorla != "kopru" and slug and which("gh"):
+        login = gh_login()
+        if login:
+            push, onbellekten = hizli_yetki(login, slug)
+            if push is False and onbellekten and not anahtar_var:  # yetki bugün verilmiş olabilir: bir kez taze bak
+                push, onbellekten = hizli_yetki(login, slug, yenile=True)
+            if push or (push is None and not anahtar_var):  # denetlenemedi ve başka yol yok: yazmayı dene
+                return "writer", login, slug, onbellekten
+    if anahtar_var:
+        if alan == "yonetim":
+            raise Stop(HIZLI_YONETIM_KOPRU)
+        return "kopru", None, None, False
+    if zorla == "kopru":
+        raise Stop(ANAHTAR_YOK + " (TF_BILGI_YOL=kopru)")
+    raise Stop(HIZLI_YOL_YOK)
+
+
+def stdin_metni():
+    """Kullanıcının kendi sözleri (skill'in tırnaklı heredoc'u); stdin terminalse boş. Geçersiz UTF-8 bayt değiştirilir."""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return ""
+        tampon = getattr(sys.stdin, "buffer", None)
+        return tampon.read().decode("utf-8", "replace") if tampon is not None else sys.stdin.read()
+    except (OSError, ValueError):
+        return ""
+
+
+def kopru_sinirlari():
+    try:
+        return kopru_kimligi()["sinirlar"]
+    except Stop:
+        return dict(KOPRU_SINIRLAR)
+
+
+def hizli_taslagi(haber):
+    """Köprüye giden en küçük taslak (köprü sözleşmesi, hızlı kayıt): her alanı kütüphaneci doldurur."""
+    return {"hizli": True, "tur": "", "baslik": "", "tldr": "", "konu_onerisi": "AYIKLA", "konu_kaynagi": "claude",
+            "aday_konular": [], "istek": None, "haber": haber, "kisisel_veri": False, "birim": [], "proje": None,
+            "hedef_kitle": [], "belge_tarihi": None, "uretim": "insan",
+            "baglantilar": {"jira": [], "pr": [], "hatirlatma": [], "cl": []}, "gecersiz_kildigi": [], "gizli": False,
+            "gizli_link": None, "notlar": []}
+
+
+def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar):
+    """Yazan: tek API commit'i → (kod, klasör, kayıttaki adlar)."""
+    notlu = bool(not_metni.strip())
+    adlar = (["govde.md"] if notlu else []) + [ad for ad, _, _ in dosyalar]
+    try:
+        kisi = hizli_kisi(slug, login, notlar)
+        an, kimlik = an_tr(), yeni_kimlik()
+        kod = f"G-{kimlik}"
+        klasor = f"{GELEN}/{an:%Y%m%d-%H%M%S}-{kisi}-{kimlik}"
+        girdiler = [_metin_girdisi(f"{klasor}/govde.md", not_metni)] if notlu else []
+        for ad, yol, _ in dosyalar:
+            blob = gh_api("POST", f"repos/{slug}/git/blobs",
+                          {"content": base64.b64encode(yol.read_bytes()).decode("ascii"), "encoding": "base64"}, 600)
+            girdiler.append({"path": f"{klasor}/{ad}", "mode": "100644", "type": "blob", "sha": _sha_al(blob)})
+        meta = gelen_meta(kisi, login, an, alan, kod, adlar, not_metni, haber,
+                          konu=None if notlu or not dosyalar else tek_satir(dosyalar[0][2], 120))
+        girdiler.append(_metin_girdisi(f"{klasor}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1) + "\n"))
+        api_commit(slug, lambda bas: (girdiler, f"gelen: {kod} · {kisi} · {len(adlar)} dosya"))
+    except GhHatasi as e:
+        if onbellekten and e.http in (401, 403, 404):
+            hizli_yetki_unut(login, slug)  # yetki değişmiş olabilir: bir sonraki çalıştırma yeniden denetler
+        neden = (f"{slug} deposu bulunamadı ya da erişimin yok (depo henüz açılmamış olabilir). " if e.http == 404
+                 else "")
+        raise Stop(f"Gönderilemedi: {neden}{e} Hiçbir şey kaydedilmedi. Tekrar dene; sürerse dosyayı Slack'te TF Bilgi "
+                   "botuna DM at.")
+    return kod, klasor, adlar
+
+
+def hizli_satir(kod, ek_sayisi, notlu, alan, dosyalama):
+    icerik = " + ".join(([f"{ek_sayisi} dosya"] if ek_sayisi else []) + (["not"] if notlu else []))
+    return (f"Gönderildi ✓ {kod} · {icerik} · {'yönetim' if alan == 'yonetim' else 'ekip'} · kütüphaneci "
+            f"{dosyalama or 'bir sonraki'} turunda dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al {kod}")
+
+
+def hizli(argv):
+    """/paylas: kullanıcının sözleri (stdin) + ekler → gelen kutusu, tek satır makbuz. Belge okunmaz, taslak yoktur,
+    soru sorulmaz. Yazan: GitHub'a tek commit; köprü anahtarı olan: köprü (yalnız ekip); ikisi de yoksa durur."""
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py hizli")
+    parser.add_argument("--yonetim", action="store_true", help="yönetim alanı (yönetim deposu)")
+    parser.add_argument("--haber", choices=("simdi", "hemen"), help="simdi: alıcılara sessiz saati beklemeden haber")
+    parser.add_argument("--ek", action="append", default=[], help="paylaşılan dosya (mutlak yol); birden çok kez")
+    args = parser.parse_args(argv)
+    alan, haber = alan_sec(args.yonetim), ("simdi" if args.haber == "simdi" else "hemen")
+    not_metni = stdin_metni()
+    notlu = bool(not_metni.strip())
+    dosyalar, kullanilan, gorulen = [], set(), set()
+    for ek in args.ek:
+        yol, gercek = ek_denetle(ek)
+        if gercek not in gorulen:  # aynı dosya iki kez verildiyse bir kez gider
+            gorulen.add(gercek)
+            dosyalar.append((kopru_dosya_adi(yol.name, kullanilan), gercek, yol.name))
+    if not dosyalar and not notlu:
+        raise Stop("Paylaşılacak bir şey yok: dosya yolu ya da bir not ver. Hiçbir şey gönderilmedi.")
+    kaynaklar = ([("govde.md", not_metni.encode("utf-8"), "notun")] if notlu else []) + dosyalar
+    anahtar_denetle(kaynaklar)
+    boyut_denetle(kaynaklar, HIZLI_DOSYA_AZAMI, HIZLI_KAYIT_AZAMI)  # iki yolun da üst sınırı; ağdan önce
+    yol, login, slug, onbellekten = hizli_yol(alan)
+    notlar = []
+    if yol == "writer":
+        kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar)
+        dosyalama = sonraki_tur(an_tr())
+    else:
+        sinir = kopru_sinirlari()
+        boyut_denetle(kaynaklar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])
+        taslak, _ = taslak_dogrula(hizli_taslagi(haber), {}, None)
+        kod, bas, bit, ozetler = kopru_gonder(taslak, kaynaklar, sinir)
+        klasor, adlar = bit.get("kayit") or bas.get("kayit"), [o["ad"] for o in ozetler]
+        dosyalama = bit.get("dosyalama") or bas.get("dosyalama") or sonraki_tur(an_tr())
+    gecmise_yaz(kod, alan, yol, slug, klasor)
+    gecici_kok = (onbellek_koku() / "gecici").resolve()
+    for _, gercek, _ in dosyalar:  # /paylas'ın gecici/'ye yazdığı not kopyaları gönderildi: bekletilmez
+        if gecici_kok in gercek.parents:
+            try:
+                gercek.unlink()
+            except OSError:
+                pass
+    return {"kod": kod, "alan": alan, "yol": yol, "dosyalar": adlar,
+            "satir": hizli_satir(kod, len(dosyalar), notlu, alan, dosyalama), "notlar": notlar}
 
 
 # --- köprü: okuma, alındı, anahtar kurulumu ---
@@ -2843,8 +3381,9 @@ def tercih_kopru(args):
 KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "temizle": temizle, "yaz": yaz,
             "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih,
             "gizli-alicilar": gizli_alicilar, "yorum": yorum, "yorumlar": yorumlar, "kur": kur, "gonder": gonder,
-            "geri-al": geri_al, "oku": oku, "ara": ara, "girdi": girdi, "alindi": alindi}
-KULLANIM = ("kullanım: tf_bilgi.py hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
+            "geri-al": geri_al, "oku": oku, "ara": ara, "girdi": girdi, "alindi": alindi, "hizli": hizli}
+KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim] [--haber simdi] [--ek YOL]... < not | "
+            "hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
             "maskele [--yonetim] DOSYA [--dizin D] | temizle YOL... | yaz [--yonetim] [--dosya F] [--uzerine] | "
             "kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL... | prler [REF...] [--repo R] | "
             "bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D] [--haber hemen|simdi|gunluk] "

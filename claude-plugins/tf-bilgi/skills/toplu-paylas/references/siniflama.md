@@ -76,17 +76,17 @@ karıştırma, asla yeni kimlik uydurma.
 
 ## Ham dosya
 
-`ham: true` yalnız üçü birlikteyse:
+**Sır paylaşımı engellemez** (7 Kas kararı: özel depo, iç kullanım): öğe sır içerse de
+paylaşılır, hiçbir öğe sır yüzünden `girmez` olmaz. `ham: true` yalnız ikisi birlikteyse:
 
 1. manifest `tara.cikis` 5 değil (taranabildi) ve `tara.kategoriler` içinde `sir` yok
-   (sır: şifre, anahtar, token, bağlantı dizesi, özel anahtar);
-2. `buyuk` false;
-3. açık güvenlik ayrıntısı yok: IP adresi, sunucu adı ile erişim bilgisi, açık
-   zafiyet ya da ihlal ayrıntısı, parola, anahtar, bağlantı dizesi.
+   (sır: şifre, anahtar, token, bağlantı dizesi, özel anahtar). Bu koşul yalnız deponun
+   pinli `kb.py dogrula`'sı `ham/` altındaki sırrı hâlâ reddettiği için var: öğe yine
+   girdi olarak yazılır, yalnız ham dosyası girmez;
+2. `buyuk` false.
 
-Değilse `ham: false` ve `ham_neden` kısa: `"sır bulgusu: <adlar>"`,
-`"güvenlik ayrıntısı"`, `"büyük dosya"`, `"taranamadı"`.
-Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
+Değilse `ham: false` ve `ham_neden` kısa: `"sır bulgusu: <adlar>"`, `"büyük dosya"`,
+`"taranamadı"`. Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
 
 **Kişisel veri engellemez** (6 Kas kararı): `tara.kategoriler` içinde `kisisel` varsa
 (telefon, e-posta, TCKN, IBAN) ya da metinde influencer kimliği, adres gibi kişisel veri
