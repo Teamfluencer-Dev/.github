@@ -33,6 +33,7 @@ class SkillShellHygieneTest(unittest.TestCase):
             self.assertNotIn("TFB gecici", govde, md)       # stdin/heredoc scratch path
             self.assertNotIn("--gerekce '", govde, md)      # reason goes through --gerekce-dosya
             self.assertNotRegex(govde, r"--mesaj '[^']*<baslik>", md)  # title goes through --mesaj-dosya
+            self.assertNotIn("--body", govde, md)           # GitHub comments only through the helper's stdin
 
     def test_write_skills_can_write_scratch_files(self):
         for name in YAZAN_BECERILER:
@@ -112,6 +113,32 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertLess(adim0, toplu.index("TFB hazirla"))  # hazırlıktan önce durur
         self.assertIn("stop before staging anything", toplu[adim0:adim0 + 600])
         self.assertIn("Do not run `hazirla` or `toplu-hazirla`", toplu[adim0:adim0 + 600])
+
+    def test_comment_text_reaches_the_helper_only_by_file(self):
+        bilgi = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md")
+        self.assertIn("Write(~/.tf-bilgi/gecici/**)", bilgi)
+        bolum = bilgi.split("\n## Yorum\n", 1)[1]
+        self.assertIn("never goes into a shell argument, heredoc or `echo`", bolum)
+        self.assertIn("to\n   `<D>/yorum.md` with the Write tool", bolum)
+        self.assertIn("`TFB yorum <id> --dosya <D>/yorum.md [--yonetim]`", bolum)            # plan: yazmaz
+        self.assertIn("`TFB yorum <id> --dosya <D>/yorum.md --gonder [--yonetim]`", bolum)   # onaydan sonra
+        self.assertLess(bolum.index("**Gönder** / **Vazgeç**"), bolum.index("--gonder"))
+        self.assertGreaterEqual(bolum.count("TFB temizle <D>"), 3)                           # ret, vazgeç, gönder
+        for satir in bilgi.splitlines():  # yorum komutlarında tırnaklı metin argümanı yok
+            if "TFB yorum" in satir:
+                self.assertNotRegex(satir, r"TFB yorum[^`|]*'", satir)
+        self.assertIn("verbatim", bilgi)
+        for parca in ("Gizli entries\ncannot be commented on", "yönetim entries only in\nthe yönetim repo"):
+            self.assertIn(parca, bolum)
+
+    def test_non_writers_are_sent_to_the_slack_bot(self):
+        bilgi = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md")
+        self.assertIn("TF Bilgi bot in Slack", bilgi)
+        self.assertIn("`aldım <girdi-id>`", bilgi)
+        self.assertIn("send the document to the TF Bilgi bot in Slack", metin(PLUGIN / "skills" / "paylas" / "SKILL.md"))
+        self.assertIn("TF Bilgi bot in Slack", metin(PLUGIN / "skills" / "toplu-paylas" / "SKILL.md"))
+        for md in SKILLS:
+            self.assertNotIn("whom to hand the document to", metin(md), md)
 
     def test_only_the_helper_runs_in_bash(self):
         for md in SKILLS:

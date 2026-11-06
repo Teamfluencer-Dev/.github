@@ -77,7 +77,8 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
 2. **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay
    the message as-is and stop **before reading or drafting anything**: only the people
    in the repo's `.kb.json` `yazanlar` list can push, and the message tells the user
-   whom to hand the document to; it also stops when it cannot tell who the user is
+   to send the document to the TF Bilgi bot in Slack (who, what is needed, by when; no
+   person is named); it also stops when it cannot tell who the user is
    (writing is only in one's own name). Keep from the JSON: `kok`, `alan`, `kisi`,
    `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`. Relay each `notlar`
    entry as one short line. The run's staging folder is `D` = `<gecici>/paylas-<damga>`;
