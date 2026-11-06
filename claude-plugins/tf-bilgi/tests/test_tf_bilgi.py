@@ -508,10 +508,12 @@ class KbSurumTest(Base):
         self.assertEqual(len(set(GERCEK_KB_SHA256)), len(GERCEK_KB_SHA256))
 
     def test_gecis_iki_surumu_de_kabul_eder(self):
-        """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): 0.6.0 = 0.4.0'ın kb.py'si (tf-bilgi#2) + köprü
-        kb.py'si (tf-bilgi#5 head d24c0a4: haber simdi, kisisel_veri, tfb1 taraması)."""
+        """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): 0.4.0'ın kb.py'si (tf-bilgi#2), köprü kb.py'si
+        (tf-bilgi#5 head d24c0a4) ve 0.7.0'ın hızlı yol + raflar kb.py'si (tf-bilgi#6 head eea2011, #7'yi içerir; KB PR'ı
+        merge edilene kadar eskiler de geçer)."""
         self.assertEqual(GERCEK_KB_SHA256, ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",
-                                            "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f"))
+                                            "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f",
+                                            "82b1e559d56f48c69e5109435667b5ead6a4691b9cbd13a05136a37044686b24"))
         self.assertNotIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)  # 0.3.1
         self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
         eski_stub = STUB_KB + "# eski\n"
@@ -2892,6 +2894,21 @@ class HizliTest(Base):
                              {"govde.md": "Mert'e bilgi\n".encode(), "Calisma.md": "içerik GIZLI-ANAHTAR-1".encode()})
             r = self.hizli("--haber", "simdi", "--ek", self.ek("x.pdf", b"%PDF"))
             self.assertEqual(kopru.islemler("baslat")[-1]["taslak"], {**HIZLI_TASLAK, "haber": "simdi"})
+            self.assertEqual([d["ad"] for d in kopru.islemler("baslat")[-1]["dosyalar"]], ["x.pdf"])  # notsuz: govde yok
+            # Yalnız not: köprü hızlı kayıtta en az bir dosya ister → not govde.md olarak gider (KB tf-bilgi#6)
+            gecici = self.cache / "gecici"
+            gecici.mkdir(parents=True, exist_ok=True)
+            (gecici / "not-1.txt").write_text("Yalnız not: Mert'e Cuma'ya kadar\n", encoding="utf-8")
+            yalniz_not = self.ok("hizli", "--not-dosya", str(gecici / "not-1.txt"))
+            self.assertEqual(yalniz_not["dosyalar"], ["govde.md"])
+            self.assertIn(" · not · ekip · ", yalniz_not["satir"])
+            baslat = kopru.islemler("baslat")[-1]
+            self.assertEqual([d["ad"] for d in baslat["dosyalar"]], ["govde.md"])
+            self.assertEqual(kopru.kayitlar[yalniz_not["kod"]]["veri"],
+                             {"govde.md": "Yalnız not: Mert'e Cuma'ya kadar\n".encode()})
+            self.assertFalse((gecici / "not-1.txt").exists())
+            self.assertIn("Paylaşılacak bir şey yok", self.stop("hizli", stdin=" \n"))  # boş: köprüye hiç gitmez
+            self.assertEqual(len(kopru.islemler("baslat")), 3)
             self.assertEqual(r["dosyalar"], ["x.pdf"])
             self.assertIn(" · 1 dosya · ekip · ", r["satir"])
             self.assertIn("Yönetim belgesini Slack'te TF Bilgi botuna 'yönetim' yazarak gönder; köprü yalnız ekip "

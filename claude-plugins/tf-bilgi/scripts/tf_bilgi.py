@@ -184,9 +184,13 @@ KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi
 # 0.6.0: köprü yolu. kb.py `haber: simdi` ve `kisisel_veri` alanını öğrendi, dogrula kişisel veriyi UYARI ve köprü
 # anahtarını (tfb1.) sır sayar (Teamfluencer-Dev/tf-bilgi#5 head d24c0a4); geçişte eski (0.4.0) ve yeni hash birlikte
 # durur, eski hash bir sonraki sürümde çıkar. Köprü yolunda kb.py köprüden indirilir ve aynı pinle denetlenir (~/.tf-bilgi/kopru/araclar/kb.py).
+# 0.7.0: hızlı yol ve raflar (Teamfluencer-Dev/tf-bilgi#6 head eea2011; #7'yi de içerir, ekip ve yönetim kopyası bayt bayt
+# aynı). KB PR'ı merge edilene kadar eklenti eski kb.py ile de çalışsın diye 0.4.0 ve 0.6.0 hash'leri de durur. Hızlı
+# /paylas kb.py'ye hiç dokunmaz; pin gizli paylaşım, /toplu-paylas ve /bilgi içindir.
 KB_SHA256 = (
     "e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",  # 0.4.0: tf-bilgi#2 head 76fd0e7
     "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f",  # 0.6.0: tf-bilgi#5 head d24c0a4
+    "82b1e559d56f48c69e5109435667b5ead6a4691b9cbd13a05136a37044686b24",  # 0.7.0: tf-bilgi#6 head eea2011
 )
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
