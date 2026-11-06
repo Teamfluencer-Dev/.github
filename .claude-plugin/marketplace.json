@@ -14,7 +14,7 @@
     },
     {
       "name": "tf-bilgi",
-      "description": "TF Bilgi: ekip bilgi bankasına /paylas ile tek komutla, /toplu-paylas ile toplu yaz, /bilgi ile oku (model API'si yok)",
+      "description": "TF Bilgi: ekip bilgi bankasına /paylas ile tek komutla, /toplu-paylas ile toplu yaz, /bilgi ile oku ve belgeleri yorumla (model API'si yok)",
       "source": "./claude-plugins/tf-bilgi",
       "category": "productivity"
     }

@@ -64,6 +64,11 @@ if komut == "kaydet":
 if komut == "tara":
     hedef = args[1]
     metin = sys.stdin.read() if hedef == "-" else Path(hedef).read_text(encoding="utf-8")
+    if "TARANAMADI" in metin:
+        print(json.dumps({"taranamadi": True, "neden": "metin katmani yok"}))
+        sys.exit(5)
+    if "TARA-COKTU" in metin:
+        sys.exit(1)
     bulgu = "GIZLI-ANAHTAR" in metin
     if "--maskele" in args:
         sys.stdout.write(metin.replace("GIZLI-ANAHTAR-123", "[maskelendi]"))
@@ -95,17 +100,99 @@ if args[:2] == ["api", "user"]:
         sys.exit(1)
     print(login)
     sys.exit(0)
-if args[:1] == ["api"] and len(args) > 1 and args[1].startswith("repos/"):  # push yetkisi
-    if os.environ.get("FAKE_GH_REPO_CIKIS"):
-        sys.exit(int(os.environ["FAKE_GH_REPO_CIKIS"]))
-    print(os.environ.get("FAKE_GH_PUSH", "true"))
-    sys.exit(0)
-if args[:2] == ["api", "--paginate"] and "/issues/" in args[2]:  # tercih yorumları, --jq .[]
-    if os.environ.get("FAKE_GH_YORUM_CIKIS"):
-        sys.exit(int(os.environ["FAKE_GH_YORUM_CIKIS"]))
-    for yorum in json.load(open(os.environ["FAKE_GH_YORUMLAR"])):
-        print(json.dumps(yorum))
-    sys.exit(0)
+if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUES durum dosyası)
+    i, yol, alanlar, yontem = 1, None, {}, "GET"
+    while i < len(args):
+        if args[i] in ("-X", "--input", "-f", "--jq"):
+            if args[i] == "-X":
+                yontem = args[i + 1]
+            if args[i] == "-f":
+                k, _, v = args[i + 1].partition("=")
+                alanlar[k] = v
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            yol = yol or args[i]
+            i += 1
+    yol = yol.split("?", 1)[0]
+    parca = yol.split("/")
+    durum = json.load(open(os.environ["FAKE_GH_ISSUES"]))
+    def kaydet():
+        json.dump(durum, open(os.environ["FAKE_GH_ISSUES"], "w"), ensure_ascii=False)
+    def cik(ad):
+        if os.environ.get(ad):
+            print("HTTP 500", file=sys.stderr)
+            sys.exit(int(os.environ[ad]))
+    if yol == "search/issues":
+        cik("FAKE_GH_ARAMA_CIKIS")
+        if durum.get("arama_hata_kalan"):  # geçici arama hatası: ilk N arama düşer
+            durum["arama_hata_kalan"] -= 1
+            kaydet()
+            print("HTTP 502", file=sys.stderr)
+            sys.exit(1)
+        aranan = alanlar["q"].split('"')[1].strip("[]")
+        ogeler = [x for x in durum["issues"] if aranan in x["title"] and not x.get("aramada_yok")]
+        print(json.dumps({"total_count": len(ogeler), "items": ogeler,
+                          "incomplete_results": bool(os.environ.get("FAKE_GH_ARAMA_EKSIK"))}))
+        sys.exit(0)
+    if len(parca) == 3:  # repos/<sahip>/<ad>: push yetkisi
+        cik("FAKE_GH_REPO_CIKIS")
+        print(os.environ.get("FAKE_GH_PUSH", "true"))
+        sys.exit(0)
+    if parca[3] == "labels":
+        if yontem == "POST":
+            cik("FAKE_GH_ETIKET_CIKIS")
+            durum["labels"].append(json.load(sys.stdin)["name"])
+            kaydet()
+            sys.exit(0)
+        if parca[4] in durum["labels"]:
+            print(parca[4])
+            sys.exit(0)
+        print("HTTP 404: Not Found", file=sys.stderr)
+        sys.exit(1)
+    if parca[3] == "issues" and len(parca) == 4:
+        if yontem == "GET":
+            cik("FAKE_GH_LISTE_CIKIS")
+            print(json.dumps(sorted(durum["issues"], key=lambda x: -x["number"])[:100]))
+            sys.exit(0)
+        cik("FAKE_GH_YAZ_CIKIS")
+        govde = json.load(sys.stdin)
+        no = durum["next"]
+        durum["next"] += 1
+        etiketler = [{"name": e} for e in govde.get("labels", [])
+                     if e in durum["labels"] and os.environ.get("FAKE_GH_PUSH", "true") == "true"]
+        issue = {"number": no, "title": govde["title"], "body": govde["body"], "state": "open", "comments": 0,
+                 "labels": etiketler, "user": {"login": os.environ.get("FAKE_GH_LOGIN", ""), "type": "User"},
+                 "html_url": "https://github.com/%s/%s/issues/%d" % (parca[1], parca[2], no)}
+        durum["issues"].append(issue)
+        kaydet()
+        print(json.dumps(issue))
+        sys.exit(0)
+    if parca[3] == "issues" and parca[5:] == ["comments"]:
+        no = parca[4]
+        if yontem == "POST":
+            cik("FAKE_GH_YAZ_CIKIS")
+            cik("FAKE_GH_YORUM_YAZ_CIKIS")  # sayfa açılır ama yorum yazılamaz (ör. kilitli)
+            yorum = {"id": 900 + len(durum["comments"].get(no, [])), "body": json.load(sys.stdin)["body"],
+                     "user": {"login": os.environ.get("FAKE_GH_LOGIN", ""), "type": "User"},
+                     "created_at": "2026-11-05T09:30:00Z", "updated_at": "2026-11-05T09:30:00Z"}
+            yorum["html_url"] = "https://github.com/%s/%s/issues/%s#issuecomment-%d" % (parca[1], parca[2], no, yorum["id"])
+            durum["comments"].setdefault(no, []).append(yorum)
+            kaydet()
+            print(json.dumps(yorum))
+            sys.exit(0)
+        if no in durum["comments"]:
+            cik("FAKE_GH_SAYFA_OKU_CIKIS")
+            liste = durum["comments"][no]
+        else:  # tercih issue'su
+            cik("FAKE_GH_YORUM_CIKIS")
+            liste = json.load(open(os.environ["FAKE_GH_YORUMLAR"]))
+        for yorum in liste:  # --paginate --jq .[]
+            print(json.dumps(yorum))
+        sys.exit(0)
+    print("unexpected gh api call: " + " ".join(args), file=sys.stderr)
+    sys.exit(99)
 if args[:2] == ["issue", "comment"]:
     print("https://github.com/%s/issues/%s#issuecomment-99" % (args[args.index("-R") + 1], args[2]))
     sys.exit(0)
@@ -178,8 +265,13 @@ class Base(unittest.TestCase):
         self.yorumlar = self.tmp / "yorumlar.json"
         self.yorumlar.write_text("[]")
         os.environ["FAKE_GH_YORUMLAR"] = str(self.yorumlar)
+        self.issues = self.tmp / "issues.json"
+        self.issues.write_text(json.dumps({"issues": [], "comments": {}, "labels": [], "next": 20}))
+        os.environ["FAKE_GH_ISSUES"] = str(self.issues)
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
-                     "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI"):
+                     "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
+                     "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
+                     "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS"):
             os.environ.pop(name, None)
         for key, value in (("user.name", "Test"), ("user.email", "test@ornek.test"),
                            ("init.defaultBranch", "main"), ("commit.gpgsign", "false")):
@@ -411,10 +503,10 @@ class KbSurumTest(Base):
         self.assertEqual(len(set(GERCEK_KB_SHA256)), len(GERCEK_KB_SHA256))
 
     def test_gecis_iki_surumu_de_kabul_eder(self):
-        """0.4.0 geçişi: KB depolarındaki eski kb.py ile gizli paylaşımlı yeni kb.py birlikte sabitli (KB §12)."""
-        self.assertIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)
+        """Geçişte eski ve yeni kb.py birlikte sabitlenebilir (KB §12); 0.5.0'da 0.4.0 geçişi bitti, eski hash çıktı."""
+        self.assertEqual(GERCEK_KB_SHA256, ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",))
+        self.assertNotIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)  # 0.3.1
         self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
-        self.assertEqual(len(GERCEK_KB_SHA256), 2)
         eski_stub = STUB_KB + "# eski\n"
         self.seed_commit("ekip", "araclar/kb.py", eski_stub)
         iki = (hashlib.sha256(eski_stub.encode()).hexdigest(), STUB_SHA256)
@@ -1064,8 +1156,9 @@ class PrlerTest(Base):
 
 
 class YetkiTest(Base):
-    """Depoya yalnız .kb.json `yazanlar` yazar. Yazma işleri taslaktan önce durur, okuma çalışır; yazma yetkisi
-    olmayanın alındısını `yazanlar`'daki biri onun adına kaydeder (onay dosyasında `kaydeden`)."""
+    """Depoya yalnız .kb.json `yazanlar` (ve Slack'teki TF Bilgi botu) yazar. Yazma işleri taslaktan önce durur ve
+    belgeyi bota göndermeyi söyler (kişi adı yok); okuma ve yorum çalışır. `yazanlar`'daki biri başkasının alındısını
+    onun adına kaydedebilir (onay dosyasında `kaydeden`)."""
 
     def setUp(self):
         super().setUp()
@@ -1089,18 +1182,22 @@ class YetkiTest(Base):
         os.environ.update({"FAKE_GH_PUSH": "false", "FAKE_GH_LOGIN": "mert-gh"})
         self.assertIs(self.ok("hazirla")["yazabilir"], False)  # okuma yolu durmaz
         out = self.stop("hazirla", "--yazma")
-        self.assertTrue(out.startswith("Bu depoya yalnız Ayşe yazabiliyor; paylaşmak istediğini Ayşe'ye ilet"), out)
-        for parca in ("ona “alındı <girdi-id>” yaz; o `/bilgi alindi <girdi-id> --kisi mert` ile senin adına kaydeder",
-                      "GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma yetkisi yok",
-                      "/bilgi kuyrugum"):
+        self.assertTrue(out.startswith("Bu depoya belgeyi Slack'teki TF Bilgi botu ekler. Belgeyi bota gönder; kime, "
+                                       "ne lazım, son tarih yaz. Aldığını bildirmek için bota 'aldım <kod>' yaz."), out)
+        for parca in ("GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma yetkisi yok (depoya yalnız "
+                      "`.kb.json` `yazanlar` listesindekiler yazar)", "/bilgi kuyrugum", "/bilgi yorum",
+                      "Bot yanıt vermiyorsa ya da henüz açık değilse belgeyi depoya yazabilen biriyle paylaş; alındı "
+                      "için ona 'alındı <kod>' yaz, o `/bilgi alindi <kod> --kisi <anahtarın>` ile senin adına kaydeder."):
             self.assertIn(parca, out)
+        for ad in ("Ayşe", "ayse", "Mert"):  # kişi adı verilmez
+            self.assertNotIn(ad, out)
         code, _, _ = self.cli("kb", "son", "--json")
         self.assertEqual(code, 0)
         onay = "onaylar/B-20261029-ayse-01--mert.md"
         (self.kok() / onay).parent.mkdir(parents=True)
         (self.kok() / onay).write_text("---\ngirdi: B-20261029-ayse-01\nkisi: mert\ntarih: 2026-11-05\n---\n")
         before = git(self.bare["ekip"], "rev-parse", "main")
-        self.assertIn("yalnız Ayşe yazabiliyor", self.stop("kaydet", "--mesaj", "alindi", onay))
+        self.assertIn("Slack'teki TF Bilgi botu", self.stop("kaydet", "--mesaj", "alindi", onay))
         self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), before)
 
     def test_yazan_yetkisizin_alindisini_kaydeder(self):
@@ -1118,7 +1215,9 @@ class YetkiTest(Base):
     def test_yazan_olmayan_baskasi_adina_kaydedemez(self):
         os.environ["FAKE_GH_LOGIN"] = "mert-gh"  # yetkisi olsa bile yazanlar'da değil
         self.ok("hazirla", "--yazma")
-        self.assertIn("yalnız kendi adınıza", self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse"))
+        out = self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse")
+        self.assertIn("yalnız kendi adınıza", out)
+        self.assertIn("TF Bilgi botuna 'aldım <kod>' yazarak ya da depoya yazabilen birine 'alındı <kod>' diye", out)
         self.assertFalse((self.kok() / "onaylar").exists())
 
     def test_denetlenemezse_durmaz(self):
@@ -1132,7 +1231,9 @@ class YetkiTest(Base):
                                                          "uzak": "Teamfluencer-Dev/tf-bilgi"}))
         os.environ["FAKE_GH_PUSH"] = "false"
         out = self.stop("hazirla", "--yazma")
-        self.assertIn("deposunda yazma yetkisi yok; paylaşmak istediğini depoya yazabilen birine ilet", out)
+        self.assertIn("Belgeyi bota gönder", out)
+        self.assertIn("deposunda yazma yetkisi yok. Okuma ve yorum çalışmaya devam eder", out)
+        self.assertNotIn("yazanlar", out)
 
     def test_yerel_uzakta_denetim_yok(self):
         os.environ["TF_BILGI_UZAK_EKIP"] = str(self.bare["ekip"])
@@ -1301,6 +1402,333 @@ class GizliAlicilarTest(Base):
         self.assertIn("önce `tf_bilgi.py hazirla", self.stop("gizli-alicilar", "--kimden", "ayse"))
 
 
+YORUM_GIRDI = "B-20261105-ayse-01"
+YORUM_GIRDI_METNI = ("---\nid: B-20261105-ayse-01\nbaslik: \"Abonelik planı v2\"\ntur: analiz\nkonu: K-0001\nalan: ekip\n"
+                     "hedef_kitle: [dev]\nistek:\n  tip: INCELE\n  kimden: [mert, zeynep]\n  son_tarih: null\n"
+                     "tldr: \"Growth 14.990'a çıksın mı? @mert bakmalı.\"\ndurum: yayinda\nyazar: ayse\n"
+                     "tarih: 2026-11-05\n---\n**Sonuç:** deneme\n")
+GIZLI_GIRDI_METNI = ("---\nid: B-20261105-ayse-02\nbaslik: \"Gizli belge\"\ntur: analiz\nkonu: GIZLI\nalan: ekip\n"
+                     "hedef_kitle: [mert]\nistek:\n  tip: BILGI\n  kimden: mert\n  son_tarih: null\n"
+                     "tldr: \"Gizli belge; içerik yalnız alıcılarla Drive'da paylaşıldı.\"\ndurum: yayinda\nyazar: ayse\n"
+                     "gizli: true\ngizli_link: \"https://drive.google.com/file/d/abc/view\"\nham: null\n"
+                     "tarih: 2026-11-05\n---\n**Sonuç:** Gizli belge.\n")
+SAYFA_URL = "https://github.com/Teamfluencer-Dev/tf-bilgi/issues/%d"
+
+
+def gh_issue(no, baslik, acan="ayse-gh", pr=False, aramada_yok=False):
+    issue = {"number": no, "title": baslik, "body": "", "state": "open", "comments": 0, "labels": [],
+             "user": {"login": acan, "type": "User"}, "html_url": SAYFA_URL % no}
+    if pr:
+        issue["pull_request"] = {"url": "x"}
+    if aramada_yok:
+        issue["aramada_yok"] = True  # arama dizini henüz görmedi
+    return issue
+
+
+def gh_yorum(no, login, govde, zaman, tip="User", duzenlendi=None):
+    return {"id": no, "user": {"login": login, "type": tip}, "body": govde, "created_at": zaman,
+            "updated_at": duzenlendi or zaman, "html_url": "https://github.com/x#issuecomment-%d" % no}
+
+
+class YorumTest(Base):
+    """/bilgi yorum ve /bilgi yorumlar: girdi başına bir GitHub issue (yorum sayfası), ilk yorumda açılır; okuma
+    yetkisi yeter, kişinin kendi gh hesabıyla; metin yalnız dosyayla; gizli ve yönetim girdisinde durur."""
+
+    def setUp(self):
+        super().setUp()
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"].update({
+            "zeynep": {"ad": "Zeynep Örnek", "alanlar": ["ekip"], "eposta": None, "github": None},
+            "can": {"ad": "Can Örnek", "alanlar": ["yonetim"], "eposta": None, "github": "can-gh"}})
+        self.seed_commit("ekip", "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-01.md", YORUM_GIRDI_METNI)
+        self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-02.md", GIZLI_GIRDI_METNI)
+        os.environ.update({"FAKE_GH_LOGIN": "mert-gh", "FAKE_GH_PUSH": "false",
+                           "TF_BILGI_SIMDI": "2026-11-05T10:00:00+03:00"})
+        bekleme = mock.patch.object(tf_bilgi, "ARAMA_TEKRAR_BEKLE", 0)
+        bekleme.start()
+        self.addCleanup(bekleme.stop)
+        self.ok("hazirla")
+        self.dosya = self.yorum_dosyasi("Bence 14.990 doğru.\nAma yıllıkta indirim şart.")
+
+    def yorum_dosyasi(self, metin, ad="yorum-1"):
+        yol = self.cache / "gecici" / ad / "yorum.md"
+        yol.parent.mkdir(parents=True, exist_ok=True)
+        yol.write_text(metin, encoding="utf-8")
+        return str(yol)
+
+    def durum(self):
+        return json.loads(self.issues.read_text())
+
+    def issue_ekle(self, *issuelar, yorumlar=None, etiketler=()):
+        d = self.durum()
+        d["issues"] += list(issuelar)
+        d["comments"].update({str(k): v for k, v in (yorumlar or {}).items()})
+        d["labels"] += list(etiketler)
+        self.issues.write_text(json.dumps(d, ensure_ascii=False))
+
+    def api_cagrilari(self, yontem=None):
+        cagrilar = [c for c in self.gh_calls() if c[:1] == ["api"] and c[1:2] != ["user"]]
+        return [c for c in cagrilar if yontem is None or (yontem == "POST") == ("POST" in c)]
+
+    def test_plan_salt_okuma_yeni_sayfa_ve_bildirim(self):
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
+        self.assertFalse(r["yazildi"])
+        self.assertIsNone(r["sayfa"])
+        self.assertEqual(r["yeni_sayfa"]["baslik"], "[B-20261105-ayse-01] Abonelik planı v2")
+        self.assertIn("etiketsiz (depoya yazma yetkin yok", r["yeni_sayfa"]["etiket"])
+        self.assertEqual(r["ben"], {"login": "mert-gh", "kisi": "mert", "ben": "mert"})
+        self.assertEqual([(a["kisi"], a["neden"]) for a in r["alicilar"]], [("ayse", "yazar"), ("zeynep", "alıcı")])
+        self.assertEqual(r["bildirim"], "şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre; kişi başı günde "
+                                        "en çok 5 yorum bildirimi, fazlası ertesi iş günü 08:30 günlük mesajında) · "
+                                        "bildirim yalnız KB deposunda bildirimler açıkken gider (pilotta yalnız pilot "
+                                        "kişilere)")
+        self.assertEqual(r["karakter"], len("Bence 14.990 doğru.\nAma yıllıkta indirim şart."))
+        self.assertEqual(self.api_cagrilari("POST"), [])  # plan hiçbir şey yazmaz
+        arama = [c for c in self.api_cagrilari() if "search/issues" in c][0]
+        self.assertIn('q=repo:Teamfluencer-Dev/tf-bilgi is:issue in:title "[B-20261105-ayse-01]"', arama)
+        os.environ["TF_BILGI_SIMDI"] = "2026-11-05T20:00:00+03:00"
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
+        self.assertTrue(r["bildirim"].startswith("sessiz saat (Per 20:00): Ayşe (yazar), Zeynep (alıcı) yarın 08:30 "
+                                                 "günlük mesajında (Yeni yorumlar) · bildirim yalnız KB deposunda"),
+                        r["bildirim"])
+
+    def test_gonder_sayfayi_acar_sonra_ayni_sayfaya_yazar(self):
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual((r["yazildi"], r["yeni_sayfa"], r["sayfa"]["numara"]), (True, True, 20))
+        self.assertIn("etiketsiz (depoya yazma yetkin yok", r["etiket"])
+        self.assertEqual(r["yorum_url"], "https://github.com/Teamfluencer-Dev/tf-bilgi/issues/20#issuecomment-900")
+        d = self.durum()
+        issue = d["issues"][0]
+        self.assertEqual(issue["title"], "[B-20261105-ayse-01] Abonelik planı v2")
+        self.assertEqual(issue["labels"], [])
+        self.assertIn("Girdi: https://github.com/Teamfluencer-Dev/tf-bilgi/blob/main/girdiler/2026/11/"
+                      "B-20261105-ayse-01.md\nTL;DR: Growth 14.990'a çıksın mı? @​mert bakmalı.", issue["body"])
+        self.assertEqual(d["comments"]["20"][0]["body"], "Bence 14.990 doğru.\nAma yıllıkta indirim şart.")
+        self.assertEqual(d["comments"]["20"][0]["user"]["login"], "mert-gh")  # kişinin kendi gh hesabı
+        self.assertFalse([c for c in self.api_cagrilari("POST") if "labels" in c[-3]])
+        # ikinci yorum (ayse, sayfa arama dizininde henüz yok: son issue'lar listesinden bulunur)
+        d["issues"][0]["aramada_yok"] = True
+        self.issues.write_text(json.dumps(d, ensure_ascii=False))
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
+        dosya = self.yorum_dosyasi("Yıllık için Can'a soralım.", "yorum-2")
+        plan = self.ok("yorum", YORUM_GIRDI, "--dosya", dosya)
+        self.assertEqual(plan["sayfa"]["numara"], 20)
+        self.assertEqual([(a["kisi"], a["neden"]) for a in plan["alicilar"]],
+                         [("mert", "alıcı"), ("zeynep", "alıcı")])  # ayse yazan; mert önceki yorumcu da
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", dosya, "--gonder")
+        self.assertEqual((r["yeni_sayfa"], r["etiket"], r["sayfa"]["numara"]), (False, None, 20))
+        self.assertEqual(len(self.durum()["issues"]), 1)
+        self.assertEqual([y["body"] for y in self.durum()["comments"]["20"]],
+                         ["Bence 14.990 doğru.\nAma yıllıkta indirim şart.", "Yıllık için Can'a soralım."])
+
+    def test_yetkisi_olan_etiketi_olusturur_ve_ekler(self):
+        os.environ.update({"FAKE_GH_LOGIN": "ayse-gh", "FAKE_GH_PUSH": "true"})
+        self.assertIn("`yorum` etiketiyle", self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)["yeni_sayfa"]["etiket"])
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual(r["etiket"], "`yorum` etiketi oluşturuldu ve eklendi")
+        self.assertEqual(self.durum()["labels"], ["yorum"])
+        self.assertEqual(self.durum()["issues"][0]["labels"], [{"name": "yorum"}])
+        # etiket varken yeniden oluşturulmaz; oluşturulamazsa sayfa etiketsiz açılır
+        self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-03.md",
+                         YORUM_GIRDI_METNI.replace("ayse-01", "ayse-03"))
+        self.ok("hazirla")
+        r = self.ok("yorum", "B-20261105-ayse-03", "--dosya", self.dosya, "--gonder")
+        self.assertEqual(r["etiket"], "`yorum` etiketiyle (etiket yoksa oluşturulur)")
+        self.assertEqual(len([c for c in self.api_cagrilari("POST") if c[-3].endswith("/labels")]), 1)
+        d = self.durum()
+        d["labels"] = []
+        self.issues.write_text(json.dumps(d))
+        self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-04.md",
+                         YORUM_GIRDI_METNI.replace("ayse-01", "ayse-04"))
+        self.ok("hazirla")
+        os.environ["FAKE_GH_ETIKET_CIKIS"] = "1"
+        r = self.ok("yorum", "B-20261105-ayse-04", "--dosya", self.dosya, "--gonder")
+        self.assertEqual(r["etiket"], "etiketsiz (`yorum` etiketi oluşturulamadı)")
+        self.assertEqual(self.durum()["issues"][-1]["labels"], [])
+
+    def test_sayfa_basligi_birebir_denetlenir(self):
+        self.issue_ekle(gh_issue(5, "[B-20261105-ayse-011] başka girdi"),
+                        gh_issue(6, "Re: [B-20261105-ayse-01] alıntı"),
+                        gh_issue(8, "[B-20261105-ayse-01] PR", pr=True),
+                        gh_issue(9, "[B-20261105-ayse-01]bitişik"),
+                        gh_issue(12, "[B-20261105-ayse-01] ikinci sayfa", acan="ayse-gh"),
+                        gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2", acan="can-gh"),
+                        yorumlar={10: [gh_yorum(1, "ayse-gh", "İlk.", "2026-11-05T08:00:00Z"),
+                                       gh_yorum(2, "dependabot[bot]", "Bot.", "2026-11-05T08:10:00Z", tip="Bot")],
+                                  12: []})
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
+        self.assertEqual(r["sayfa"]["numara"], 10)
+        self.assertIsNone(r["yeni_sayfa"])
+        self.assertIn("Bu girdinin 2 yorum sayfası var (#10, #12); yorum en eskisine (#10) yazılır.", r["notlar"])
+        # sayfayı açan Can (yalnız yönetim) önceki yorumcu: ekip alanından bildirim almaz
+        self.assertEqual([(a["kisi"], a["neden"], a["alan_uyesi"]) for a in r["alicilar"]],
+                         [("ayse", "yazar", True), ("zeynep", "alıcı", True), ("can", "önceki yorumcu", False)])
+        self.assertIn("Can'a bildirim gitmez (ekip alanının üyesi değil)", r["bildirim"])
+        self.assertTrue(tf_bilgi.sayfa_basligi_mi("[B-20261105-ayse-01]", YORUM_GIRDI))
+        self.assertFalse(tf_bilgi.sayfa_basligi_mi("[B-20261105-ayse-01]x", YORUM_GIRDI))
+
+    def aramalar(self):
+        return [c for c in self.api_cagrilari() if "search/issues" in c]
+
+    def test_arama_yanit_vermezse_ikinci_sayfa_acilmaz(self):
+        os.environ["FAKE_GH_ARAMA_CIKIS"] = "1"
+        self.assertIn("ikinci bir sayfa açmamak için yazmadım",
+                      self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(len(self.aramalar()), 2)  # bir kez daha bakıldı
+        self.assertEqual(self.api_cagrilari("POST"), [])
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2"), yorumlar={10: []})
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")  # son issue'larda bulunur
+        self.assertEqual((r["sayfa"]["numara"], r["yeni_sayfa"]), (10, False))
+        os.environ["FAKE_GH_LISTE_CIKIS"] = "1"
+        self.assertIn("Yorum sayfası aranamadı", self.stop("yorumlar", YORUM_GIRDI))  # ikisi de düştü
+
+    def test_liste_yanit_vermezse_yeni_sayfa_acilmaz(self):
+        # #10 var ama arama dizini henüz görmedi; son issue listesi düştü
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2", aramada_yok=True), yorumlar={10: []})
+        os.environ["FAKE_GH_LISTE_CIKIS"] = "1"
+        self.assertIn("ikinci bir sayfa açmamak", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(self.api_cagrilari("POST"), [])
+        self.assertEqual(len(self.durum()["issues"]), 1)
+        # liste düşse de arama sayfayı görüyorsa yorum o sayfaya yazılır
+        d = self.durum()
+        d["issues"][0].pop("aramada_yok")
+        self.issues.write_text(json.dumps(d, ensure_ascii=False))
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual((r["sayfa"]["numara"], r["yeni_sayfa"]), (10, False))
+
+    def test_arama_eksik_donerse_yeni_sayfa_acilmaz(self):
+        os.environ["FAKE_GH_ARAMA_EKSIK"] = "1"
+        self.assertIn("eksik döndü", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(self.durum()["issues"], [])
+        self.assertIn("ikinci bir sayfa açmamak", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya))  # plan da
+
+    def test_arama_bir_kez_duserse_yeniden_bakar_ve_acar(self):
+        d = self.durum()
+        d["arama_hata_kalan"] = 1
+        self.issues.write_text(json.dumps(d))
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual((r["yeni_sayfa"], r["sayfa"]["numara"]), (True, 20))
+        self.assertEqual(len(self.aramalar()), 2)
+        self.assertEqual(len(self.durum()["issues"]), 1)
+
+    def test_yazma_reddedilirse(self):
+        os.environ["FAKE_GH_YAZ_CIKIS"] = "1"  # sayfa açılamaz (403, issue'lar kapalı)
+        out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertIn("Yorum sayfası açma yapılamadı", out)
+        self.assertIn("okuma yetkisi olmalı", out)
+        self.assertEqual(self.durum()["issues"], [])
+        os.environ.pop("FAKE_GH_YAZ_CIKIS")
+        os.environ["FAKE_GH_YORUM_YAZ_CIKIS"] = "1"  # sayfa açılır, yorum yazılamaz (kilitli)
+        out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertIn("Yorum yazma yapılamadı", out)
+        self.assertIn("Sayfa kilitliyse yorum yazılamaz", out)
+        self.assertEqual(len(self.durum()["issues"]), 1)
+        os.environ.pop("FAKE_GH_YORUM_YAZ_CIKIS")
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")  # sonraki çalıştırma aynı sayfayı bulur
+        self.assertEqual((r["yeni_sayfa"], r["sayfa"]["numara"]), (False, 20))
+        self.assertEqual(len(self.durum()["issues"]), 1)
+
+    def test_okuma_hatasinda_dogru_ipucu(self):
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2"), yorumlar={10: []})
+        os.environ["FAKE_GH_SAYFA_OKU_CIKIS"] = "1"
+        for argv in (("yorumlar", YORUM_GIRDI), ("yorum", YORUM_GIRDI, "--dosya", self.dosya)):
+            out = self.stop(*argv)
+            self.assertIn("Yorum sayfası okunamadı", out)
+            self.assertIn("yorum için yazma yetkisi gerekmez", out)
+            self.assertNotIn("okuma-yazma", out)
+
+    def test_tarama_yapilamazsa_yazmaz(self):
+        for metin, cikis in (("TARANAMADI", 5), ("TARA-COKTU", 1)):
+            out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.yorum_dosyasi(metin, "t%d" % cikis), "--gonder")
+            self.assertIn(f"Yorum taranamadı (kb.py tara çıkış {cikis}); yorumu yazmadım", out)
+        self.assertEqual(self.api_cagrilari("POST"), [])
+
+    def test_gizli_girdi_reddedilir_githuba_gidilmez(self):
+        out = self.stop("yorum", "B-20261105-ayse-02", "--dosya", self.dosya, "--gonder")
+        self.assertIn("B-20261105-ayse-02 gizli bir girdi: yorum yazılmaz", out)
+        self.assertIn("Görüşünü göndericiye (Ayşe) doğrudan ilet", out)
+        out = self.stop("yorumlar", "B-20261105-ayse-02")
+        self.assertIn("herkese açık yorum sayfası yok", out)
+        self.assertEqual(self.api_cagrilari(), [])
+
+    def test_yonetim_girdisi_reddedilir(self):
+        for argv in (("yorum", "BY-20261029-ayse-01", "--dosya", self.dosya, "--gonder"),
+                     ("yorum", YORUM_GIRDI, "--yonetim", "--dosya", self.dosya),
+                     ("yorumlar", "BY-20261029-ayse-01"), ("yorumlar", YORUM_GIRDI, "--yonetim")):
+            out = self.stop(*argv)
+            self.assertIn("yalnız yönetim deposunda (tf-bilgi-yonetim) açılır; o depo GitHub'da henüz yok", out, argv)
+            self.assertIn("Yorumu ekip deposuna da yazmıyorum", out, argv)
+        self.assertFalse(self.kok("yonetim").exists())
+        self.assertEqual(self.api_cagrilari(), [])
+        self.assertIn("bulunamadı", self.stop("yorumlar", "B-20261105-ayse-77"))
+        self.assertIn("anlaşılmadı", self.stop("yorumlar", "B-1; rm -rf ~"))
+
+    def test_kimlik(self):
+        os.environ["TF_BILGI_KISI"] = "ayse"  # gh girişi mert-gh
+        self.assertIn("Başkası adına paylaşılmaz", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        os.environ.update({"TF_BILGI_KISI": "mert", "FAKE_GH_LOGIN": "baska-gh"})
+        self.assertIn("GitHub girişin (baska-gh) kisiler.json'daki hesabınla (mert-gh) aynı değil",
+                      self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        os.environ["FAKE_GH_LOGIN"] = ""
+        self.assertIn("GitHub girişin okunamadı", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya))
+        self.assertEqual(self.api_cagrilari("POST"), [])
+        os.environ.update({"TF_BILGI_KISI": "zeynep", "FAKE_GH_LOGIN": "zeynep-gh"})  # kisiler.json'da github yok
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
+        self.assertEqual(r["ben"], {"login": "zeynep-gh", "kisi": None, "ben": "zeynep"})
+        self.assertTrue(any("kisiler.json'da kayıtlı değil" in n for n in r["notlar"]))
+        self.assertIn("kendi yorumunun bildirimi sana da gider", r["bildirim"])
+
+    def test_metin_yalniz_dosyadan_taranir_kabuga_girmez(self):
+        tehlikeli = "Fiyat 'yüksek'; $(rm -rf ~) `x` \"y\" && echo z\n\nİkinci paragraf."
+        dosya = self.yorum_dosyasi(tehlikeli + "\x07", "yorum-3")
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", dosya, "--gonder")
+        self.assertEqual(self.durum()["comments"][str(r["sayfa"]["numara"])][0]["body"], tehlikeli)
+        for cagri in self.gh_calls():  # metin hiçbir gh argümanında yok: gövde stdin'den
+            self.assertFalse(any("rm -rf" in a or "İkinci paragraf" in a for a in cagri), cagri)
+        self.assertIn("geçici klasörünün altında", self.stop("yorum", YORUM_GIRDI, "--dosya", str(self.tmp / "x.md")))
+        self.assertIn("Yorum boş", self.stop("yorum", YORUM_GIRDI, "--dosya", self.yorum_dosyasi(" \n\t", "bos")))
+        self.assertIn("Yorum çok uzun", self.stop("yorum", YORUM_GIRDI, "--dosya",
+                                                  self.yorum_dosyasi("a" * 10001, "uzun")))
+        once = len(self.api_cagrilari("POST"))
+        out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.yorum_dosyasi("anahtar GIZLI-ANAHTAR-123", "sir"),
+                        "--gonder")
+        self.assertIn("Yorumda sır ya da kişisel veri olabilir (sir); yorumu yazmadım", out)
+        self.assertNotIn("GIZLI-ANAHTAR-123", out)
+        self.assertEqual(len(self.api_cagrilari("POST")), once)
+
+    def test_yorumlar_birden_cok_sayfa_birlesir(self):
+        self.issue_ekle(gh_issue(12, "[B-20261105-ayse-01] ikinci sayfa"), gh_issue(10, "[B-20261105-ayse-01] ilk"),
+                        yorumlar={10: [gh_yorum(1, "ayse-gh", "A1", "2026-11-05T06:00:00Z"),
+                                       gh_yorum(3, "ayse-gh", "A3", "2026-11-05T08:00:00Z")],
+                                  12: [gh_yorum(2, "mert-gh", "B2", "2026-11-05T07:00:00Z")]})
+        r = self.ok("yorumlar", YORUM_GIRDI)
+        self.assertEqual([(y["metin"], y["sayfa"]) for y in r["yorumlar"]], [("A1", 10), ("B2", 12), ("A3", 10)])
+        self.assertEqual([s["numara"] for s in r["sayfalar"]], [10, 12])
+        self.assertEqual(r["sayfa"]["numara"], 10)
+        self.assertIn("Bu girdinin 2 yorum sayfası var; hepsinin yorumları birlikte gösterildi, yeni yorum #10'e yazılır.",
+                      r["notlar"])
+
+    def test_yorumlar_eskiden_yeniye_adlarla(self):
+        self.assertEqual(self.ok("yorumlar", YORUM_GIRDI)["satir"],
+                         "Henüz yorum yok. Yazmak için: /bilgi yorum B-20261105-ayse-01 <yorumun>")
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2"), yorumlar={10: [
+            gh_yorum(3, "mert-gh", "Üçüncü.", "2026-11-05T09:00:00Z", duzenlendi="2026-11-05T09:05:00Z"),
+            gh_yorum(1, "AYSE-GH", "Birinci.", "2026-11-04T17:00:00Z"),
+            gh_yorum(2, "yabanci", "İkinci.", "2026-11-05T06:00:00Z"),
+            gh_yorum(4, "dependabot[bot]", "Bot.", "2026-11-05T09:10:00Z", tip="Bot")]})
+        r = self.ok("yorumlar", YORUM_GIRDI)
+        self.assertEqual(r["sayfa"]["url"], SAYFA_URL % 10)
+        self.assertEqual([(y["ad"], y["tarih"], y["duzenlendi"], y["bot"]) for y in r["yorumlar"]],
+                         [("Ayşe", "4 Kas Çar 20:00", False, False), ("yabanci", "5 Kas Per 09:00", False, False),
+                          ("Mert", "5 Kas Per 12:00", True, False), ("dependabot[bot]", "5 Kas Per 12:10", False, True)])
+        self.assertEqual((r["toplam"], r["onceki"], r["satir"]), (4, 0, ""))
+        r = self.ok("yorumlar", YORUM_GIRDI, "--son", "2")
+        self.assertEqual(([y["metin"] for y in r["yorumlar"]], r["onceki"]), (["Üçüncü.", "Bot."], 2))
+        self.assertEqual(self.api_cagrilari("POST"), [])
+        self.assertEqual(git(self.kok(), "status", "--porcelain"), "")  # klona yazmaz
+
+
 class CliTest(Base):
     def test_hazirla_prints_json(self):
         code, out, _ = self.cli("hazirla")
@@ -1324,6 +1752,7 @@ class CliTest(Base):
         self.assertIn("kullanım", err)
         self.assertIn("temizle", err)
         self.assertIn("gizli-alicilar", err)
+        self.assertIn("yorumlar GIRDI_ID", err)
 
 
 if __name__ == "__main__":

@@ -110,7 +110,7 @@ Re-enable it right after.
 TF Bilgi, ekibin GitHub'daki bilgi bankasıdır: `Teamfluencer-Dev/tf-bilgi` (ekip) ve
 `Teamfluencer-Dev/tf-bilgi-yonetim` (yönetim), ikisi de private. Eklenti Claude Code'dan
 tek komutla yazmayı (`/paylas`), bir klasör dolusu belgeyi toplu paylaşmayı (`/toplu-paylas`) ve
-okumayı (`/bilgi`) sağlar. Kuralların tek kaynağı
+okumayı ve belgeler üzerine yorumlaşmayı (`/bilgi`, `/bilgi yorum`) sağlar. Kuralların tek kaynağı
 KB deposundaki `araclar/kb.py` ve `CLAUDE.md`'dir; eklenti yalnız onu çağırır.
 
 ### Kurulum (her geliştirici, bir kez)
@@ -123,8 +123,9 @@ claude plugin install tf-bilgi@teamfluencer
 Gerekenler: git, Python 3.9+, `gh auth login` ve GitHub hesabınızın KB deposuna okuma
 yetkisi. **Yazma** (`/paylas`, `/toplu-paylas`, `/bilgi alindi`) için depoya yazma yetkisi
 gerekir; 6 Kas 2026'dan beri bu yetki yalnız KB deposunun `.kb.json` `yazanlar` listesindeki
-kişilerde. Yetkisi olmayanda eklenti taslak hazırlamadan durur ve belgeyi kime ileteceğini
-söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan yana
+kişilerde ve Slack'teki TF Bilgi botunda. Yetkisi olmayanda eklenti taslak hazırlamadan durur ve
+belgeyi bota göndermesini söyler (aşağıda); okuma (`/bilgi`), bildirim tercihi (`/bilgi tercih`)
+ve yorum (`/bilgi yorum`, `/bilgi yorumlar`) okuma yetkisiyle çalışır. Eklenti model çağırmaz, API anahtarı istemez; `tf-review` ile yan yana
 çalışır. Kurulum her yapılandırma klasörü (`CLAUDE_CONFIG_DIR`) için ayrı yapılır.
 
 ### Kullanım
@@ -144,7 +145,17 @@ söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Ekl
 /bilgi alindi B-20261105-ayse-01 --kisi mert   # yazanlar: yetkisi olmayanın alındısını onun adına
 /bilgi tercih                # bildirim kanalın ve çözülüp çözülmediği
 /bilgi tercih slack,mail     # tercihini "Bildirim tercihleri" issue'suna yazar
+/bilgi yorum B-20261105-ayse-01 Growth için 14.990 bence erken   # belgenin yorum sayfasına (okuma yetkisi yeter)
+/bilgi yorumlar B-20261105-ayse-01
 ```
+
+**Yazma yetkisi olmayanlar: Slack'teki TF Bilgi botu.** 6 Kas 2026'dan beri depoya
+yalnız `.kb.json` `yazanlar` listesindekiler ve TF Bilgi botu belge ekler. Diğer herkes
+belgeyi Slack'te botuna DM ile gönderir ve kime, ne lazım, son tarih yazar; devir ya da
+karar için aldığını bota `aldım <girdi-id>` yazarak bildirir. Bot canlıya çıkana kadar (ya da
+yanıt vermezse) yedek yol durur: belgeyi depoya yazabilen biriyle paylaşmak, alındıyı ona
+“alındı <girdi-id>” diye iletmek. `/paylas`, `/toplu-paylas` ve `/bilgi alindi` yetkisi
+olmayanda taslaktan önce durur ve iki yolu da söyler (kişi adı vermez).
 
 `/paylas` konuyu eşleştirir (`kb.py eslestir`), içeriği ve ekleri sır/KVKK için tarar
 (`kb.py tara`), tek bir onay kartı gösterir (konu + güven, tür · kitle · alan, istek,
@@ -158,7 +169,8 @@ belirlemez. `pr-listesi` türünde tablo `gh` ile (yalnız okuma) PR'ların
 
 İstek bir ya da birden çok kişiye yöneltilir (`kimden: ayse` ya da
 `kimden: [ayse, mert]`); alındı kişi başınadır. Depoya yazma yetkisi olmayan alıcı
-“alındı <girdi-id>”yi `yazanlar` listesindekilerden birine yazar; o
+aldığını TF Bilgi botuna `aldım <girdi-id>` yazarak (bot yanıt vermezse yazabilen birine
+“alındı <girdi-id>” ileterek) bildirir; `yazanlar`'daki biri gerekirse
 `/bilgi alindi <girdi-id> --kisi <alıcı>` ile onun adına kaydeder (onay dosyasında
 `kaydeden`; KB `dogrula` kaydedenin `yazanlar`'da olduğunu denetler). "Hemen haber ver"
 denirse girdiye `haber: hemen` yazılır ve push'ta her alıcıya anlık mesaj gider (hafta içi 08:30–19:00,
@@ -190,6 +202,26 @@ Bildirim kuralları (hemen, kanal, sessiz saat, pilot) aynıdır; mesaj "<Gönde
 gizli bir belge gönderdi" + Drive bağlantısı. `/bilgi` gizli girdiyi 🔒 ve bağlantıyla
 gösterir, özet göstermez; erişimi Drive verir. `/toplu-paylas`'ta gizli kip yoktur.
 Kurallar: KB `CLAUDE.md` §4.6.
+
+**Yorum sayfaları** (KB `CLAUDE.md` §10.3): her girdinin tartışması KB deposunda bir
+GitHub issue'sunda durur (`[<girdi-id>] <başlık>`, etiket `yorum`, gövde girdi bağlantısı ve
+TL;DR); sayfa ilk yorumda açılır. `/bilgi yorum <girdi-id> <yorum>` yorumu Write aracıyla
+geçici klasöre yazar (kabuğa girmez), `tf_bilgi.py yorum` önce yalnız okuyup kartı kurar
+(sayfa var mı, yeni açılacaksa başlığı ve etiketi, kime bildirim gider), onayda yorumu
+`kb.py tara` ile tarar (sır ya da kişisel veri bulgusunda yazmaz), sayfa yoksa açar ve
+yorumu kişinin kendi `gh` hesabıyla yazar; okuma yetkisi yeter. Etiketi yalnız depoya yazma
+yetkisi olan ekler (etiket yoksa oluşturur), öbürleri sayfayı etiketsiz açar. Sayfa başlık
+önekiyle bulunur: GitHub araması ve son açılan 100 issue, sonra başlık birebir denetlenir.
+Sayfa bulunamadığında ikisinden biri yanıt vermediyse ya da arama eksik döndüyse bir kez daha
+bakar; yine emin değilse ikinci bir sayfa açmamak için durur. GitHub girişi `kisiler.json`'daki
+hesapla çelişirse durur. Gizli girdiye yorum yazılmaz (sayfa her okuyana açık; `/bilgi
+yorumlar` gizli girdide herkese açık sayfa olmadığını söyler); yönetim girdilerinin sayfası
+yalnız yönetim deposunda olur, o depo GitHub'da henüz olmadığı için reddedilir. KB'deki
+`bildirim.yml` yeni yorumda girdinin yazarına, alıcılarına ve önceki yorumculara bildirir
+(kanal, sessiz saat ve pilot aynı; günlük sınır ayrı: kişi başı günde 5 yorum bildirimi, acil
+istek bildirimlerinin hakkını yemez); sessiz saatte yazılan yorum ertesi iş günü 08:30 günlük
+mesajında çıkar. Kart bildirim için söz vermez: bildirimleri KB'deki Action gönderir, kapalıyken
+ya da pilotta gitmeyebilir.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce
@@ -237,9 +269,9 @@ eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) ça
 4. Yeni özellik iki taraf da canlı olunca duyurulur; "eklentiyi güncelleyin" mesajı ondan
    söz etmez.
 
-Geçişte `KB_SHA256` iki hash taşır (0.4.0: GitHub'daki KB deposunun bugünkü `kb.py`'si ve
-gizli paylaşımlı yeni `kb.py`, Teamfluencer-Dev/tf-bilgi#2 head `76fd0e7`); eski hash bir
-sonraki sürümde çıkar. Yönetim deposu (`tf-bilgi-yonetim`) GitHub'da henüz yok: 0.3.1
+Geçişte `KB_SHA256` eski ve yeni hash'i birlikte taşır; eski hash bir sonraki sürümde çıkar.
+0.4.0 geçişi (gizli paylaşımlı `kb.py`, Teamfluencer-Dev/tf-bilgi#2 head `76fd0e7`) bitti:
+0.5.0 yalnız o hash'i taşır. Yönetim deposu (`tf-bilgi-yonetim`) GitHub'da henüz yok: 0.3.1
 kullanan kimse ona erişemedi. Depo açıldığında ilk push'u aynı yeni `kb.py` ile yapılır;
 o güne kadar `--yonetim` ile paylaşım çalışmaz.
 

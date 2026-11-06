@@ -1,7 +1,7 @@
 {
   "name": "tf-bilgi",
-  "version": "0.4.0",
-  "description": "TF Bilgi: ekibin GitHub'daki bilgi bankasına tek komutla yaz (/paylas: konu eşleştirme, sır/KVKK taraması, tek onay kartı, commit), bir klasör dolusu belgeyi toplu paylaş (/toplu-paylas: öğe öğe ekip/yönetim/girmez sınıflama, tek onay tablosu, alan başına commit) ve oku (/bilgi: kuyruğun, son girdiler, konu, arama, alındı, bildirim kanalı tercihi). Paylaşım bir ya da birden çok kişiye gider, istenirse hemen bildirimle; depoya yalnız yazma yetkisi olanlar yazar. Gizli paylaşımda belge okunmaz ve depoya girmez: Google Drive'da yalnız alıcılarla paylaşılır, depoya yalnız kimin kime ne gönderdiği yazılır. Model API'si ya da anahtar kullanmaz.",
+  "version": "0.5.0",
+  "description": "TF Bilgi: ekibin GitHub'daki bilgi bankasına tek komutla yaz (/paylas: konu eşleştirme, sır/KVKK taraması, tek onay kartı, commit), bir klasör dolusu belgeyi toplu paylaş (/toplu-paylas: öğe öğe ekip/yönetim/girmez sınıflama, tek onay tablosu, alan başına commit) ve oku (/bilgi: kuyruğun, son girdiler, konu, arama, alındı, bildirim kanalı tercihi). Paylaşım bir ya da birden çok kişiye gider, istenirse hemen bildirimle; depoya yalnız yazma yetkisi olanlar yazar. Gizli paylaşımda belge okunmaz ve depoya girmez: Google Drive'da yalnız alıcılarla paylaşılır, depoya yalnız kimin kime ne gönderdiği yazılır. Her girdinin bir yorum sayfası (GitHub issue) olur: /bilgi yorum ile okuma yetkisiyle yorum yazılır, /bilgi yorumlar ile okunur; yazar ve alıcılar bildirim alır. Yazma yetkisi olmayanlar belgeyi Slack'teki TF Bilgi botuna gönderir. Model API'si ya da anahtar kullanmaz.",
   "author": {
     "name": "Teamfluencer"
   },

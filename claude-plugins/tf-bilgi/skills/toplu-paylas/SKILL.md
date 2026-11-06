@@ -78,6 +78,8 @@ before step 4 (subagents read it too).
 
 2. **Prepare.** `TFB hazirla --yazma` (timeout 300000 ms). Exit 2 → relay the message
    as-is and stop before staging anything (only the repo's `.kb.json` `yazanlar` can push;
+   everyone else sends documents to the TF Bilgi bot in Slack or, until the bot answers,
+   to someone who can write to the repo, which the message says;
    it also stops when it cannot tell who the user is). Keep `kok`, `kisi`, `uzak`,
    `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay `notlar` as one short
    line each. Read
