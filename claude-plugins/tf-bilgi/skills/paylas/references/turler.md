@@ -96,3 +96,21 @@ Adım adım SOP gerekiyorsa ayrı bir `nasil-yapilir` girdisi olur (numaralı ad
 ## `pr-listesi`
 
 Tablo (SKILL.md "PR list mode") + **Nasıl doğrulanır** + **Bilinen tuzaklar**. Tek ekran.
+
+## Gizli (`gizli: true`, SKILL.md "Gizli mode")
+
+Belge okunmaz, depoya girmez; Drive'da yalnız alıcılarla paylaşılır. Gövde, `tldr`,
+`ham` ve `ham_notu` `kb taslak --gizli`'nin bastığı sabit metindir ve elle değişmez
+(`kb dogrula` birebir denetler). Burada yalnız tür seçimi geçerlidir ve yalnız
+kullanıcının kendi sözlerinden yapılır, belgeden değil:
+
+| Kullanıcı ne diyor | `tur` | `--istek-tip` |
+|---|---|---|
+| "karar lazım", "onayla" | `karar` | `KARAR` (varsayılan) |
+| "devrediyorum", "sende" | `devir` | `EYLEM` (varsayılan) |
+| "bak / incele / yorumla" | `analiz` | `INCELE` |
+| yalnız "gönderiyorum", "bilgin olsun" ya da belirsiz | `analiz` | `BILGI` (varsayılan) |
+
+Başlık varsayılan "Gizli belge"dir; kullanıcı açıkça "başlık görünsün" demedikçe
+belgenin adı ya da konusu başlığa yazılmaz. Konu yalnız kullanıcı bir konu
+kimliği verirse değişir, yoksa `GIZLI` kalır.

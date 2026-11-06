@@ -134,6 +134,7 @@ söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Ekl
 /paylas geldiğim nokta: ödeme ekranı bitti, test bekliyor
 /paylas api#1976 web#689 merge sırası devri
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
+/paylas gizli: Ayşe'ye, yalnız o görsün ./teklif.pdf   # belge okunmaz, Drive'da paylaşılır
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
@@ -166,6 +167,24 @@ kime özette, hangi kanaldan gideceğini ve kime hiçbir şey gitmeyeceğini ad�
 (`tf_bilgi.py bildirim-plani`, yalnız okur). Kanal tercihi (Slack, mail, WhatsApp; bir ya
 da birden çok) KB ekip deposundaki "Bildirim tercihleri" issue'sunda `tercih: kanal=…`
 yorumuyla durur; `/bilgi tercih` okur ve yazar.
+
+**Gizli paylaşım** ("gizli", "özel", "confidential", "yalnız o görsün" ya da
+`--gizli`): belgenin içeriği hiçbir depoya girmez. Eklenti belgeyi açmaz, taramaz,
+dönüştürmez, özetlemez ve geçici klasöre kopyalamaz. Alıcıların iş e-postalarını
+gösterir (`tf_bilgi.py gizli-alicilar`, KB `kisiler.json`'dan; kayıtlı değilse
+söyler, tahmin etmez) ve Drive adımlarını verir: dosyayı kendi Drive'ına (ortak
+drive'a değil: ortak drive üyeleri her şeyi görür) yükle, Paylaş → yalnız bu
+e-postalar Görüntüleyici, "Genel erişim" Kısıtlı, bağlantıyı yapıştır. Bağlantı
+yalnız `https://drive.google.com/…` ya da `https://docs.google.com/…` olabilir
+(`kb.py taslak --gizli` denetler). Depoya yalnız sabit metinli bir girdi yazılır:
+kim → kime, Drive bağlantısı, nasıl alındı denir (`gizli: true`, `ham: null`; başlık
+istenmedikçe "Gizli belge"). Kartta `gizli: evet · içerik depoya girmez · link: …`
+satırı çıkar. Oturumda dosyayı yoldan yükleyip paylaşabilen bir Google Drive
+connector'ı varsa eklenti bunu önerebilir; elle yol her zaman tek başına çalışır.
+Bildirim kuralları (hemen, kanal, sessiz saat, pilot) aynıdır; mesaj "<Gönderen> sana
+gizli bir belge gönderdi" + Drive bağlantısı. `/bilgi` gizli girdiyi 🔒 ve bağlantıyla
+gösterir, özet göstermez; erişimi Drive verir. `/toplu-paylas`'ta gizli kip yoktur.
+Kurallar: KB `CLAUDE.md` §4.6.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce
@@ -204,7 +223,9 @@ sürümünü çalıştırır: sha256'sı `scripts/tf_bilgi.py` içindeki `KB_SHA
 repoda review'dan geçer. Klondaki `kb.py` farklıysa eklenti hiçbir komutu çalıştırmaz ve
 eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) çalışır. KB
 deposunda `kb.py` değişecekse önce bu repoda yeni hash'i ekleyen PR açılır (sürüm artar,
-`/pr-review`), sonra `kb.py` iki KB deposuna gelir (KB `CLAUDE.md` §12).
+`/pr-review`), sonra `kb.py` iki KB deposuna gelir (KB `CLAUDE.md` §12). Geçişte
+`KB_SHA256` iki hash taşır (0.4.0: KB depolarındaki bugünkü `kb.py` ve gizli paylaşımlı
+yeni `kb.py`); eski hash bir sonraki sürümde çıkar.
 
 ### Notlar
 

@@ -63,6 +63,12 @@ before step 4 (subagents read it too).
 
 ## Steps
 
+0. **Gizli?** There is no confidential mode in bulk. If `$ARGUMENTS` has `--gizli` or
+   the user asks for it ("gizli", "özel", "confidential", "yalnız o görsün", "depoya
+   girmesin"), stop before staging anything and reply: "Toplu paylaşımda gizli kip yok;
+   gizli belgeyi tek tek `/paylas` ile gizli paylaş (belge okunmaz, depoya girmez,
+   Drive'da yalnız alıcılarla paylaşılır)." Do not run `hazirla` or `toplu-hazirla`.
+
 1. **Paths and batch recipients.** Collect the paths from `$ARGUMENTS`; make each
    absolute (expand `~`). None given → ask once which folder or files to share. The
    rest of the text may name batch recipients and ask for `haber: hemen`; resolve the

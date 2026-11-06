@@ -49,6 +49,26 @@ class SkillShellHygieneTest(unittest.TestCase):
             self.assertIn("TFB temizle <D>", govde, name)
             self.assertRegex(govde, r"Vazgeç: reply \"Vazgeçildi; depoya hiçbir şey yazılmadı\.[^\"]*<D>", name)
 
+    def test_gizli_mode_never_touches_the_document(self):
+        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        bolum = paylas.split("## Gizli mode", 1)[1].split("\n## ", 1)[0]
+        kurallar, adimlar = bolum.split("\nG1. ", 1)
+        self.assertIn("Never read the document", kurallar)
+        for komut in ("`TFB kb tara`", "`TFB maskele`", "`TFB kb ham-ekle`", "`TFB kb eslestir`"):
+            self.assertIn(komut, kurallar, komut)  # yasak listesinde
+        for parca in ("ham-ekle", "maskele", "eslestir", "Read <", "metin.txt"):
+            self.assertNotIn(parca, adimlar, parca)  # adımlarda belgeye dokunan komut yok
+        self.assertEqual(adimlar.count("TFB kb tara"), 1)
+        self.assertIn("TFB kb tara <D>/girdi.md", adimlar)  # yalnız kaydın kendisi taranır
+        for secenek in ("--gizli-link-dosya <D>/link.txt", "TFB gizli-alicilar", "TFB temizle <D>", "taslak --help"):
+            self.assertIn(secenek, adimlar, secenek)
+        self.assertIn("gizli  : evet · içerik depoya girmez · link:", adimlar)
+
+    def test_bulk_share_refuses_gizli(self):
+        toplu = metin(PLUGIN / "skills" / "toplu-paylas" / "SKILL.md")
+        self.assertIn("Gizli", toplu)
+        self.assertIn("before staging anything", toplu.split("Gizli", 1)[1][:600])
+
     def test_only_the_helper_runs_in_bash(self):
         for md in SKILLS:
             izinler = re.search(r"(?ms)^allowed-tools:\n(.*?)^---", metin(md)).group(1)

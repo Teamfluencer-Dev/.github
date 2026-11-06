@@ -36,7 +36,8 @@ sha256 is in KB_SHA256 (reviewed here), in isolated mode (python3 -I).
   kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL...
                                  Contract section 10 guard (only new girdiler/,
                                  ham/, onaylar/ files and an append-only
-                                 ham/DEFTER.tsv), then kb.py kaydet; prints links.
+                                 ham/DEFTER.tsv; no ham/ path next to a gizli
+                                 entry), then kb.py kaydet; prints links.
                                  F: first line of a file under <cache>/gecici/.
   prler [REF...] [--repo R]...   Read-only PR rows for a pr-listesi entry:
                                  claude-review state, merge state, stacking.
@@ -50,6 +51,12 @@ sha256 is in KB_SHA256 (reviewed here), in isolated mode (python3 -I).
                                  "Bildirim tercihleri" issue, or post one
                                  `tercih: kanal=...` comment there (gh issue comment;
                                  read access is enough, no push).
+  gizli-alicilar [--yonetim] --kimden a,b
+                                 Read-only, for a confidential (gizli) share: each
+                                 recipient's work e-mail from kisiler.json (the
+                                 address to add in Google Drive "Paylaş"), or null
+                                 when none is recorded, and whether they are a member
+                                 of the area. Never guesses an address.
 
 No model calls and no API keys: only git, the GitHub CLI and kb.py. Python 3.9+,
 stdlib only. Messages for the user are Turkish; exit code 2 means "show this
@@ -98,8 +105,11 @@ KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi
 # Sözleşme: eklenti yalnız bu sha256'lardan birine sahip araclar/kb.py'yi çalıştırır (ekip ve yönetim kopyası bayt bayt
 # aynı). kb.py değişince yeni hash buraya eklenir (eklenti PR'ı + /pr-review, sürüm artar), sonra KB depolarına kb.py
 # gelir; geçişte eski ve yeni hash birlikte durur, eski hash bir sonraki sürümde çıkar (KB CLAUDE.md §12).
+# 0.4.0 geçişi: ilki KB depolarında bugün duran kb.py (0.3.1'in sabiti), ikincisi gizli paylaşımlı kb.py (taslak --gizli,
+# §4.6). Bu sürüm merge edilip kullanıcılar güncelleyince yeni kb.py iki KB deposuna gönderilir; ilki sonraki sürümde çıkar.
 KB_SHA256 = (
-    "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",
+    "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",  # 0.3.1: KB depolarındaki kb.py
+    "107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785",  # 0.4.0: gizli girdi (taslak --gizli)
 )
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
@@ -884,6 +894,19 @@ def onay_kaydeden(metin):
     return None
 
 
+def gizli_girdi_mi(metin):
+    """Frontmatter'da `gizli: true` var mı (gizli girdi: belge hiçbir depoya girmez, KB CLAUDE.md §4.6)."""
+    satirlar = metin.lstrip("\ufeff").splitlines()
+    if not satirlar or satirlar[0].strip() != "---":
+        return False
+    for satir in satirlar[1:]:
+        if satir.strip() in ("---", "..."):
+            return False
+        if re.match(r"^gizli:\s*true\s*(?:#.*)?$", satir.strip(), re.I):
+            return True
+    return False
+
+
 def onay_sorunu(kok, ayar, yol):
     """onaylar/<id>--<kisi>.md: kendi adınıza; başkası adına yalnız `yazanlar`'dan ve `kaydeden: <siz>` ile."""
     kisi = ONAY_RE.match(yol).group(1)
@@ -947,6 +970,12 @@ def kaydet(argv):
             sorun = onay_sorunu(kok, ayar, yol)
             if sorun:
                 sorunlar.append(sorun)
+    gizliler = [y for y in yollar if y.startswith("girdiler/") and (kok / y).is_file()
+                and gizli_girdi_mi((kok / y).read_text(encoding="utf-8"))]
+    hamlar = [y for y in yollar if y.startswith("ham/")]
+    if gizliler and hamlar:
+        sorunlar.append(f"gizli girdiyle ({', '.join(Path(y).stem for y in gizliler)}) ham/ dosyası kaydedilmez: "
+                        f"belge hiçbir depoya girmez ({', '.join(hamlar[:3])})")
     hazir = [y for y in git(kok, "diff", "--cached", "--name-only").stdout.splitlines() if y and y not in yollar]
     if hazir:
         sorunlar.append(f"başka dosyalar commit için hazırlanmış: {', '.join(hazir[:5])} — önce: "
@@ -1311,13 +1340,46 @@ def tercih(argv):
             "cozum": kanal_cozumu(kisiler[hedef])}
 
 
+# --- confidential (gizli) share: recipients' Drive addresses (read-only) ---
+
+def gizli_alicilar(argv):
+    """Gizli paylaşım (KB CLAUDE.md §4.6): Drive'da "Paylaş"a eklenecek iş e-postaları kisiler.json'dan. Adres yoksa
+    null döner; tahmin edilmez (yanlış adrese paylaşmak belgeyi başkasına açar)."""
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py gizli-alicilar")
+    parser.add_argument("--yonetim", action="store_true")
+    parser.add_argument("--kimden", required=True, help="kişi anahtarları, virgülle")
+    args = parser.parse_args(argv)
+    alan = alan_sec(args.yonetim)
+    kok = mevcut_kok(alan)
+    kisiler = kisileri_oku(kok)
+    anahtarlar = list(dict.fromkeys(k.strip() for k in args.kimden.split(",") if k.strip()))
+    bilinmeyen = [k for k in anahtarlar if k not in kisiler]
+    if not anahtarlar or bilinmeyen:
+        raise Stop(f"Kişi anahtarı kisiler.json'da yok: {', '.join(bilinmeyen) or '(boş)'}")
+    satirlar, parcalar, notlar = [], [], []
+    for k in anahtarlar:
+        bilgi, ad = kisiler[k] or {}, ilk_ad(kisiler, k)
+        eposta = str(bilgi.get("eposta") or "").strip() or None
+        uye = alan in (bilgi.get("alanlar") or [])
+        satirlar.append({"kisi": k, "ad": ad, "eposta": eposta, "alan_uyesi": uye})
+        parcalar.append(f"{ad}: {eposta}" if eposta else f"{ad}: e-postası kayıtlı değil (kisiler.json)")
+        if not uye:
+            notlar.append(f"{ad} {alan} alanının üyesi değil: bu alandan ona bildirim gitmez")
+    eksik = [s["ad"] for s in satirlar if not s["eposta"]]
+    if eksik:
+        notlar.append(f"{adlari_bagla(eksik)} için e-posta kayıtlı değil: Drive'da adıyla aranıp iş adresi seçilmeli ya "
+                      "da adres kişinin kendisine sorulmalı; tahmin edilmez.")
+    return {"alicilar": satirlar, "eksik_eposta": eksik, "satir": " · ".join(parcalar), "notlar": notlar}
+
+
 KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "temizle": temizle, "yaz": yaz,
-            "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih}
+            "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih,
+            "gizli-alicilar": gizli_alicilar}
 KULLANIM = ("kullanım: tf_bilgi.py hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
             "maskele [--yonetim] DOSYA [--dizin D] | temizle YOL... | yaz [--yonetim] [--dosya F] [--uzerine] | "
             "kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL... | prler [REF...] [--repo R] | "
             "bildirim-plani [--yonetim] --tip T --kimden a,b --yazar K [--son-tarih D] [--haber hemen|gunluk] [--adet N] | "
-            "tercih [--kanal slack,mail,whatsapp] [--kisi K]")
+            "tercih [--kanal slack,mail,whatsapp] [--kisi K] | gizli-alicilar [--yonetim] --kimden a,b")
 
 
 def main(argv=None):
