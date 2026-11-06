@@ -182,7 +182,8 @@ yalnız `https://drive.google.com/…` ya da `https://docs.google.com/…` olabi
 (`kb.py taslak --gizli` denetler); eklentinin `kaydet`'i gizli girdiye ham dosya ya da
 defter satırı bağlanmasını ayrı çağrılarda da reddeder. Depoya yalnız sabit metinli bir girdi yazılır:
 kim → kime, Drive bağlantısı, nasıl alındı denir (`gizli: true`, `ham: null`; başlık
-istenmedikçe "Gizli belge"). Kartta `gizli: evet · içerik depoya girmez · link: …`
+istenmedikçe "Gizli belge", en çok 40 karakter). Ortak drive'daki dosya için kopya
+oluşturulursa kayda kopyanın bağlantısı girer ve üç soru o bağlantı için yeniden sorulur. Kartta `gizli: evet · içerik depoya girmez · link: …`
 satırı çıkar. Oturumda dosyayı yoldan yükleyip paylaşabilen bir Google Drive
 connector'ı varsa eklenti bunu önerebilir; elle yol her zaman tek başına çalışır.
 Bildirim kuralları (hemen, kanal, sessiz saat, pilot) aynıdır; mesaj "<Gönderen> sana
@@ -236,8 +237,11 @@ eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) ça
 4. Yeni özellik iki taraf da canlı olunca duyurulur; "eklentiyi güncelleyin" mesajı ondan
    söz etmez.
 
-Geçişte `KB_SHA256` iki hash taşır (0.4.0: KB depolarındaki bugünkü `kb.py` ve gizli
-paylaşımlı yeni `kb.py`, Teamfluencer-Dev/tf-bilgi#2); eski hash bir sonraki sürümde çıkar.
+Geçişte `KB_SHA256` iki hash taşır (0.4.0: GitHub'daki KB deposunun bugünkü `kb.py`'si ve
+gizli paylaşımlı yeni `kb.py`, Teamfluencer-Dev/tf-bilgi#2 head `76fd0e7`); eski hash bir
+sonraki sürümde çıkar. Yönetim deposu (`tf-bilgi-yonetim`) GitHub'da henüz yok: 0.3.1
+kullanan kimse ona erişemedi. Depo açıldığında ilk push'u aynı yeni `kb.py` ile yapılır;
+o güne kadar `--yonetim` ile paylaşım çalışmaz.
 
 ### Notlar
 

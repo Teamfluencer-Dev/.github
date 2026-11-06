@@ -85,6 +85,20 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("genel erişim Kısıtlı — <kullanıcı onayladı | connector doğruladı>", satir[0])
         self.assertIn("states only what G4 confirmed", g8)
 
+    def test_gizli_shared_drive_copy_link_is_required(self):
+        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        g4 = paylas.split("\nG4. ", 1)[1].split("\nG5. ", 1)[0]
+        g5 = paylas.split("\nG5. ", 1)[1].split("\nG6. ", 1)[0]
+        self.assertIn("Kopyasını oluştur", g4)
+        self.assertIn("kopya oluşturmadıysan gerekmez; kopya oluşturduysan kopyanın bağlantısı şart", g4)
+        self.assertIn("a copy was made in step 1", g4)  # üç soru kopyanın linki için yeniden
+        self.assertIn("**and** no copy was made in G4 step 1", g5)
+        self.assertIn("the copy's link is required", g5)
+        self.assertIn("never record the original shared-drive link", g5)
+        self.assertIn("ask the three G4 questions again for the copy", g5)
+        self.assertNotIn("Unless the user already gave it, ask for the link", g5)
+        self.assertIn("at most 40 characters", g5)
+
     def test_gizli_recovery_overwrites_same_id(self):
         paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
         g9 = paylas.split("\nG9. ", 1)[1].split("\nSeveral gizli documents", 1)[0]

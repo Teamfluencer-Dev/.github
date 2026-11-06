@@ -413,6 +413,7 @@ class KbSurumTest(Base):
     def test_gecis_iki_surumu_de_kabul_eder(self):
         """0.4.0 geçişi: KB depolarındaki eski kb.py ile gizli paylaşımlı yeni kb.py birlikte sabitli (KB §12)."""
         self.assertIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)
+        self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
         self.assertEqual(len(GERCEK_KB_SHA256), 2)
         eski_stub = STUB_KB + "# eski\n"
         self.seed_commit("ekip", "araclar/kb.py", eski_stub)

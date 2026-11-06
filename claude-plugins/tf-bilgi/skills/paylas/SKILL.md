@@ -332,7 +332,8 @@ G4. **Sharing — always, also when the user already gave a Drive link.** A past
     1. Yeni yükleme: drive.google.com → Drive'ım (My Drive) → Yeni → Dosya yükleme → <dosya adı>
        Bağlantı verdiysen: dosyayı aç ve konumuna bak. Ortak drive'daysa (Shared drive)
        sağ tık → Kopyasını oluştur (Make a copy), kopyayı Drive'ım'a taşı ve aşağıdaki
-       adımları kopyada yap. Ortak drive üyeleri içindeki her şeyi görür.
+       adımları kopyada yap; kayda kopyanın bağlantısı girer (4. adım). Ortak drive
+       üyeleri içindeki her şeyi görür.
     2. Dosyaya sağ tık → Paylaş → Paylaş. Kişi listesinde sen (sahip) ve yalnız şu
        e-postalar olmalı, rol: Görüntüleyici (Viewer); başka biri varsa kaldır:
          <e-posta 1>
@@ -341,7 +342,8 @@ G4. **Sharing — always, also when the user already gave a Drive link.** A past
        - "Teamfluencer" (kuruluş geneli: Teamfluencer'daki herkes bağlantıyla açar)
        - "Bağlantıya sahip olan herkes" (Anyone with the link)
        Yeni dosyada varsayılan kuruluş geneli olabilir: Kısıtlı yazdığını gözünle gör.
-    4. "Bağlantıyı kopyala" (Copy link) → bağlantıyı buraya yapıştır (verdiysen gerekmez).
+    4. "Bağlantıyı kopyala" (Copy link) → bağlantıyı buraya yapıştır (bağlantı verdiysen ve
+       kopya oluşturmadıysan gerekmez; kopya oluşturduysan kopyanın bağlantısı şart).
     ```
     Then one AskUserQuestion call with three separate questions; each is answered for
     itself and none is inferred from another (or from the link):
@@ -355,7 +357,7 @@ G4. **Sharing — always, also when the user already gave a Drive link.** A past
     Any answer other than the first option → say which step (1, 2 or 3) to fix, wait for
     the user, and ask that question again. Continue only after three explicit "Evet"
     answers; they are what the card's `paylaşım` line states (G8). If the link changes
-    later (Düzelt), ask all three again.
+    later (a copy was made in step 1, or Düzelt), ask all three again for the new link.
     Optional, only if the session has a Google Drive connector whose tools can upload
     a local file **by path** and share it with given e-mails: offer once with
     AskUserQuestion "Elle yükleyeceğim (önerilen)" / "Sen yükle ve paylaş". If chosen:
@@ -366,10 +368,13 @@ G4. **Sharing — always, also when the user already gave a Drive link.** A past
     the upload tool would need the file's content in the call, do not use it (that reads
     the document). Any failure → the manual steps above. The manual path must always
     work on its own.
-G5. **Link.** Unless the user already gave it, ask for the link (plain reply; wait for
-    it). Write only the link itself (the `https://…` part, one line) to `<D>/link.txt`
-    with the Write tool. A title is shown in the repo
-    only if the user explicitly asks for one ("başlık görünsün: …"): then Write it to
+G5. **Link.** Ask for the link (plain reply; wait for it) unless the user already gave
+    it **and** no copy was made in G4 step 1. If the file was in a shared drive and a copy
+    was made, the copy's link is required: never record the original shared-drive link,
+    then ask the three G4 questions again for the copy. Write only the link itself (the
+    `https://…` part, one line) to `<D>/link.txt` with the Write tool. A title is shown in the repo
+    only if the user explicitly asks for one ("başlık görünsün: …"), at most 40 characters
+    (`taslak` refuses longer; say so and ask for a shorter one): then Write it to
     `<D>/baslik.txt`; otherwise the title stays "Gizli belge".
 G6. **Draft.** `TFB kb taslak --tur <tur> --kisi <kisi> --kanal claude-code --gizli
     --gizli-link-dosya <D>/link.txt --alici <k1,k2> [--istek-tip <TIP>] [--son-tarih
@@ -384,9 +389,14 @@ G6. **Draft.** `TFB kb taslak --tur <tur> --kisi <kisi> --kanal claude-code --gi
     - Keep the printed entry as is, except: `konu` → a topic id only if the user named
       one (else stays `GIZLI`; never `ONERI:`/`AYIKLA`, never matched from content);
       `haber: hemen` line after the `istek` block only on an explicit "hemen haber ver";
-      `birim`/`proje`/`baglantilar` only from ids or words the user gave. Never edit the
-      body, `tldr`, `ham`, `ham_notu`, `gizli`, `gizli_link`, `istek`, `hedef_kitle`: if
-      recipients, request, deadline, title or link change (Düzelt), rerun `taslak`.
+      `birim`/`proje`/`baglantilar` only from ids or words the user gave;
+      `gecersiz_kildigi: [<id>]` only when the user says this corrects their own earlier
+      gizli entry (e.g. wrong recipient; the librarian then retires the old one). Keep the
+      printed layout exactly (same order, same quoting, no comments, no extra lines):
+      `kb dogrula` compares the whole frontmatter with the canonical form. Never edit the
+      body, `tldr`, `ham`, `ham_notu`, `gizli`, `gizli_link`, `istek`, `hedef_kitle`,
+      `paket` (`null`), `guven`: if recipients, request, deadline, title or link change
+      (Düzelt), rerun `taslak`.
 G7. **Plan and scan the entry.** `TFB bildirim-plani` as in "Recipients and `haber`"
     (it applies to gizli entries exactly as to others). Write the entry to
     `<D>/girdi.md`, then `TFB kb tara <D>/girdi.md --json` (this scans only the

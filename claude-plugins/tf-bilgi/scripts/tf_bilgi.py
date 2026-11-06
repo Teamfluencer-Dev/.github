@@ -110,11 +110,13 @@ KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi
 # SHA'sını gösterir (/pr-review, sürüm artar). İki PR aynı gün merge edilir: KB PR'ı eklenti merge'ünün hemen ardından;
 # eski eklenti o andan sonra durur (kapalı kalır). Geçişte eski ve yeni hash birlikte durur, eski hash bir sonraki sürümde
 # çıkar (KB CLAUDE.md §12).
-# 0.4.0 geçişi: ilki KB depolarında bugün duran kb.py (0.3.1'in sabiti), ikincisi gizli paylaşımlı kb.py (taslak --gizli,
-# §4.6): Teamfluencer-Dev/tf-bilgi#2, head 6392d32a393e073dcf7f17d77c3ef9ae46ea93a6.
+# 0.4.0 geçişi: ilki GitHub'daki KB deposunda bugün duran kb.py (0.3.1'in sabiti), ikincisi gizli paylaşımlı kb.py
+# (taslak --gizli, §4.6): Teamfluencer-Dev/tf-bilgi#2, head 76fd0e76a10aec6a7d14424062cb1fb68bd216c2. Ara sürümler hiç
+# yayınlanmadı, sabitlenmez. Yönetim deposu (tf-bilgi-yonetim) GitHub'da henüz yok: hiçbir 0.3.1 kullanıcısı ona
+# erişemedi; açıldığında ilk push'u bu yeni kb.py ile yapılır.
 KB_SHA256 = (
-    "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",  # 0.3.1: KB depolarındaki kb.py
-    "107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785",  # 0.4.0: gizli girdi (taslak --gizli)
+    "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",  # 0.3.1: GitHub'daki KB deposunun kb.py'si
+    "e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",  # 0.4.0: tf-bilgi#2 head 76fd0e7
 )
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
