@@ -152,8 +152,10 @@ ve yorum (`/bilgi yorum`, `/bilgi yorumlar`) okuma yetkisiyle çalışır. Eklen
 **Yazma yetkisi olmayanlar: Slack'teki TF Bilgi botu.** 6 Kas 2026'dan beri depoya
 yalnız `.kb.json` `yazanlar` listesindekiler ve TF Bilgi botu belge ekler. Diğer herkes
 belgeyi Slack'te botuna DM ile gönderir ve kime, ne lazım, son tarih yazar; devir ya da
-karar için aldığını bota `aldım <girdi-id>` yazarak bildirir. `/paylas`, `/toplu-paylas`
-ve `/bilgi alindi` yetkisi olmayanda taslaktan önce durur ve bunu söyler (kişi adı vermez).
+karar için aldığını bota `aldım <girdi-id>` yazarak bildirir. Bot canlıya çıkana kadar (ya da
+yanıt vermezse) yedek yol durur: belgeyi depoya yazabilen biriyle paylaşmak, alındıyı ona
+“alındı <girdi-id>” diye iletmek. `/paylas`, `/toplu-paylas` ve `/bilgi alindi` yetkisi
+olmayanda taslaktan önce durur ve iki yolu da söyler (kişi adı vermez).
 
 `/paylas` konuyu eşleştirir (`kb.py eslestir`), içeriği ve ekleri sır/KVKK için tarar
 (`kb.py tara`), tek bir onay kartı gösterir (konu + güven, tür · kitle · alan, istek,
@@ -167,7 +169,8 @@ belirlemez. `pr-listesi` türünde tablo `gh` ile (yalnız okuma) PR'ların
 
 İstek bir ya da birden çok kişiye yöneltilir (`kimden: ayse` ya da
 `kimden: [ayse, mert]`); alındı kişi başınadır. Depoya yazma yetkisi olmayan alıcı
-aldığını TF Bilgi botuna `aldım <girdi-id>` yazarak bildirir; `yazanlar`'daki biri gerekirse
+aldığını TF Bilgi botuna `aldım <girdi-id>` yazarak (bot yanıt vermezse yazabilen birine
+“alındı <girdi-id>” ileterek) bildirir; `yazanlar`'daki biri gerekirse
 `/bilgi alindi <girdi-id> --kisi <alıcı>` ile onun adına kaydeder (onay dosyasında
 `kaydeden`; KB `dogrula` kaydedenin `yazanlar`'da olduğunu denetler). "Hemen haber ver"
 denirse girdiye `haber: hemen` yazılır ve push'ta her alıcıya anlık mesaj gider (hafta içi 08:30–19:00,
@@ -208,14 +211,17 @@ geçici klasöre yazar (kabuğa girmez), `tf_bilgi.py yorum` önce yalnız okuyu
 `kb.py tara` ile tarar (sır ya da kişisel veri bulgusunda yazmaz), sayfa yoksa açar ve
 yorumu kişinin kendi `gh` hesabıyla yazar; okuma yetkisi yeter. Etiketi yalnız depoya yazma
 yetkisi olan ekler (etiket yoksa oluşturur), öbürleri sayfayı etiketsiz açar. Sayfa başlık
-önekiyle bulunur: GitHub araması ve son açılan 100 issue, sonra başlık birebir denetlenir;
-arama yanıt vermezse ikinci bir sayfa açmamak için durur. GitHub girişi `kisiler.json`'daki
+önekiyle bulunur: GitHub araması ve son açılan 100 issue, sonra başlık birebir denetlenir.
+Sayfa bulunamadığında ikisinden biri yanıt vermediyse ya da arama eksik döndüyse bir kez daha
+bakar; yine emin değilse ikinci bir sayfa açmamak için durur. GitHub girişi `kisiler.json`'daki
 hesapla çelişirse durur. Gizli girdiye yorum yazılmaz (sayfa her okuyana açık; `/bilgi
 yorumlar` gizli girdide herkese açık sayfa olmadığını söyler); yönetim girdilerinin sayfası
 yalnız yönetim deposunda olur, o depo GitHub'da henüz olmadığı için reddedilir. KB'deki
 `bildirim.yml` yeni yorumda girdinin yazarına, alıcılarına ve önceki yorumculara bildirir
-(kanal, sessiz saat, günlük sınır ve pilot aynı); sessiz saatte yazılan yorum ertesi iş günü
-08:30 günlük mesajında çıkar.
+(kanal, sessiz saat ve pilot aynı; günlük sınır ayrı: kişi başı günde 5 yorum bildirimi, acil
+istek bildirimlerinin hakkını yemez); sessiz saatte yazılan yorum ertesi iş günü 08:30 günlük
+mesajında çıkar. Kart bildirim için söz vermez: bildirimleri KB'deki Action gönderir, kapalıyken
+ya da pilotta gitmeyebilir.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce

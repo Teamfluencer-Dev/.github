@@ -89,6 +89,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -167,9 +168,12 @@ MERGE_DURUMU_TR = {
 ERISIM_IPUCU = ("Depo private: GitHub hesabınızın bu depoya okuma-yazma yetkisi olmalı (yoksa org "
                 "yöneticisinden isteyin) ve `gh auth status` geçerli olmalı.")
 # 6 Kas kararı: depoya yalnız `yazanlar` ve Slack'teki TF Bilgi botu belge ekler; yazma yetkisi olmayan paylaşımı ve
-# alındıyı bota DM ile yapar (kişi adı verilmez). /bilgi okuma ve /bilgi yorum okuma yetkisiyle çalışır.
+# alındıyı bota DM ile yapar (kişi adı verilmez). Bot canlıya çıkana kadar (ya da yanıt vermezse) eski yedek yol da
+# söylenir: depoya yazabilen biriyle paylaşmak. /bilgi okuma ve /bilgi yorum okuma yetkisiyle çalışır.
 BOT_YOLU = ("Bu depoya belgeyi Slack'teki TF Bilgi botu ekler. Belgeyi bota gönder; kime, ne lazım, son tarih yaz. "
-            "Aldığını bildirmek için bota 'aldım <kod>' yaz.")
+            "Aldığını bildirmek için bota 'aldım <kod>' yaz. Bot yanıt vermiyorsa ya da henüz açık değilse belgeyi "
+            "depoya yazabilen biriyle paylaş; alındı için ona 'alındı <kod>' yaz, o `/bilgi alindi <kod> --kisi "
+            "<anahtarın>` ile senin adına kaydeder.")
 OKUMA_YOLU = ("Okuma ve yorum çalışmaya devam eder: /bilgi kuyrugum, /bilgi son, /bilgi konu, /bilgi ara, "
               "/bilgi yorum, /bilgi yorumlar.")
 KIM_BILINMIYOR = ("Kim olduğunuz bulunamadı; depoya yalnız kendi adınıza yazılır. Kabuk profilinize "
@@ -673,7 +677,7 @@ def alindi_argumanlari(kok, alan, argv, istenen, ben):
     if not yazan_mi(depo_ayari(kok, alan), ben):
         raise Stop(f"'alindi' yalnız kendi adınıza yazılır: --kisi {istenen!r} ama siz '{ben}'. Başkası adına alındıyı "
                    "yalnız deponun `yazanlar` listesindekiler kaydeder; alıcı aldığını Slack'teki TF Bilgi botuna "
-                   "'aldım <kod>' yazarak bildirir.")
+                   "'aldım <kod>' yazarak ya da depoya yazabilen birine 'alındı <kod>' diye ileterek bildirir.")
     return argv if kaydeden else [*argv, "--kaydeden", ben]  # `--` reddedildi: sona eklemek güvenli
 
 
@@ -1197,11 +1201,11 @@ def tercih_yeri(ayar, alan):
             ayar.get("tercih_deposu") or uzak_slug(ayar, alan))
 
 
-def issue_yorumlari(repo, no, ne="Bildirim tercihleri"):
+def issue_yorumlari(repo, no, ne="Bildirim tercihleri", ipucu=None):
     proc = sh(["gh", "api", "--paginate", f"repos/{repo}/issues/{no}/comments?per_page=100", "--jq", ".[]"],
               check=False, timeout=60)
     if proc.returncode != 0:
-        raise Stop(f"{ne} okunamadı ({repo} issue #{no}). {ERISIM_IPUCU}\nAyrıntı: {ayrinti(proc)}")
+        raise Stop(f"{ne} okunamadı ({repo} issue #{no}). {ipucu or ERISIM_IPUCU}\nAyrıntı: {ayrinti(proc)}")
     return [json.loads(satir) for satir in proc.stdout.splitlines() if satir.strip()]
 
 
@@ -1431,6 +1435,8 @@ YORUM_ETIKETI = "yorum"
 YORUM_ETIKET_AYARI = {"name": YORUM_ETIKETI, "color": "1d76db", "description": "TF Bilgi: bir girdinin yorum sayfası"}
 YORUM_AZAMI = 10000   # karakter; daha uzunu belge olarak /paylas ile paylaşılır
 YORUM_GOSTERIM = 20   # /bilgi yorumlar: son N yorum
+YORUM_GUNLUK_SINIR = 5  # KB bildir.py ile aynı: kişi başı günde en çok yorum bildirimi (acil istek sayacından ayrı)
+ARAMA_TEKRAR_BEKLE = 3.0  # saniye: arama ile son issue listesi ayrışırsa bir kez daha bakmadan önce (testler 0 yapar)
 YORUM_METIN_AZAMI = 2000  # /bilgi yorumlar: yorum başına gösterilen karakter
 YORUM_KONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # sekme ve satır sonu kalır
 AYLAR_KISA = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
@@ -1443,8 +1449,8 @@ GIZLI_YORUM_YOK = ("{id} gizli bir girdi: yorum yazılmaz. Yorum sayfası depoyu
                    "belgenin içeriğini sızdırabilir. Görüşünü göndericiye ({ad}) doğrudan ilet.")
 GIZLI_SAYFA_YOK = ("{id} gizli bir girdi: herkese açık yorum sayfası yok (yorum belgenin içeriğini sızdırabileceği için "
                    "yazılmaz). Görüşünü göndericiye ({ad}) doğrudan ilet.")
-ARAMA_YOK = ("Yorum sayfası aranamadı (GitHub araması yanıt vermedi); ikinci bir sayfa açmamak için yazmadım. Biraz sonra "
-             "tekrar dene.")
+ARAMA_YOK = ("Bu girdinin yorum sayfası olup olmadığından emin olamadım (GitHub araması ya da son issue listesi yanıt "
+             "vermedi ya da eksik döndü); ikinci bir sayfa açmamak için yazmadım. Biraz sonra tekrar dene.")
 
 
 def kirp(metin, azami):
@@ -1566,23 +1572,26 @@ def gh_api_gonder(yol, govde, ne):
 
 def yorum_sayfalari(repo, girdi_id):
     """Girdinin yorum sayfaları (numaraya göre) ve aramanın tam olup olmadığı. GitHub araması eski sayfaları, son açılan
-    100 issue aramanın dizinleme gecikmesini kapatır; başlık birebir denetlenir, PR'lar elenir. İkisi de yanıt
-    vermezse durur."""
+    100 issue aramanın dizinleme gecikmesini kapatır; başlık birebir denetlenir, PR'lar elenir. `tam` yalnız ikisi de
+    yanıt verdiyse ve arama eksik sonuç (`incomplete_results`) bildirmediyse True: değilse yeni sayfa açılmaz (biri
+    yeni açılmış bir sayfayı göremeyebilir). İkisi de yanıt vermezse durur."""
     sorgu = f'repo:{repo} is:issue in:title "[{girdi_id}]"'
     arama, hata1 = gh_api_al("-X", "GET", "search/issues", "-f", f"q={sorgu}", "-f", "per_page=100")
     son, hata2 = gh_api_al("-X", "GET", f"repos/{repo}/issues", "-f", "state=all", "-f", "sort=created",
                            "-f", "direction=desc", "-f", "per_page=100")
-    arama_tam = hata1 is None and isinstance(arama, dict)
-    if not arama_tam and (hata2 is not None or not isinstance(son, list)):
+    arama_var = hata1 is None and isinstance(arama, dict)
+    liste_var = hata2 is None and isinstance(son, list)
+    if not arama_var and not liste_var:
         raise Stop(f"Yorum sayfası aranamadı ({repo}). {YORUM_IPUCU}\nAyrıntı: {hata1 or hata2}")
+    tam = arama_var and liste_var and not arama.get("incomplete_results")
     bulunan = {}
-    for it in ((arama or {}).get("items") or [] if arama_tam else []) + (son if isinstance(son, list) else []):
+    for it in ((arama or {}).get("items") or [] if arama_var else []) + (son if liste_var else []):
         if (isinstance(it, dict) and isinstance(it.get("number"), int) and not it.get("pull_request")
                 and sayfa_basligi_mi(it.get("title"), girdi_id)):
             bulunan[it["number"]] = {"numara": it["number"], "baslik": it.get("title"), "url": it.get("html_url"),
                                      "durum": it.get("state"), "yorum_sayisi": it.get("comments"),
                                      "acan": str((it.get("user") or {}).get("login") or "")}
-    return [bulunan[n] for n in sorted(bulunan)], arama_tam
+    return [bulunan[n] for n in sorted(bulunan)], tam
 
 
 def gh_bot_mu(kullanici):
@@ -1634,14 +1643,16 @@ def yorum_bildirimi(girdi, onceki_loginler, kisiler, kimlik):
             parcalar.append(f"sessiz saat ({GUN_KISA[an.weekday()]} {an:%H:%M}): {', '.join(gidecek)} "
                             f"{ozet_zamani(an)} günlük mesajında (Yeni yorumlar)")
         else:
-            parcalar.append(f"şimdi: {', '.join(gidecek)} (kanal tercihine göre; kişi başı günde en çok 3 anlık, "
-                            "fazlası ertesi iş günü 08:30 günlük mesajında)")
+            parcalar.append(f"şimdi: {', '.join(gidecek)} (kanal tercihine göre; kişi başı günde en çok "
+                            f"{YORUM_GUNLUK_SINIR} yorum bildirimi, fazlası ertesi iş günü 08:30 günlük mesajında)")
     else:
         parcalar.append("kimseye bildirim gitmez")
     parcalar += [f"{yonelme(a['ad'])} bildirim gitmez (ekip alanının üyesi değil)" for a in alicilar
                  if not a["alan_uyesi"]]
     if kimlik["kisi"] is None and kimlik["ben"] in gorulen:
         parcalar.append("kendi yorumunun bildirimi sana da gider (kisiler.json'da GitHub hesabın yok)")
+    if gidecek:  # vaat abartılmasın: bildirimi KB'deki Action gönderir; kapalıysa ya da pilottaysa gitmeyebilir
+        parcalar.append("bildirim yalnız KB deposunda bildirimler açıkken gider (pilotta yalnız pilot kişilere)")
     return alicilar, " · ".join(parcalar)
 
 
@@ -1735,9 +1746,12 @@ def yorum(argv):
     kimlik = yorum_kimligi(kok, notlar)
     yorum_tara(kok, yol)
     repo = uzak_slug(ayar, "ekip")
-    sayfalar, arama_tam = yorum_sayfalari(repo, girdi["id"])
-    if not sayfalar and not arama_tam:
-        raise Stop(ARAMA_YOK)
+    sayfalar, tam = yorum_sayfalari(repo, girdi["id"])
+    if not sayfalar and not tam:  # arama ile liste ayrıştı: bir kez daha bak, yine emin değilsen yeni sayfa açma
+        time.sleep(ARAMA_TEKRAR_BEKLE)
+        sayfalar, tam = yorum_sayfalari(repo, girdi["id"])
+        if not sayfalar and not tam:
+            raise Stop(ARAMA_YOK)
     sayfa = sayfalar[0] if sayfalar else None
     if len(sayfalar) > 1:
         notlar.append(f"Bu girdinin {len(sayfalar)} yorum sayfası var ("
@@ -1746,7 +1760,7 @@ def yorum(argv):
     if sayfa:
         onceki = [sayfa["acan"]] if sayfa["acan"] else []
         onceki += [str((y.get("user") or {}).get("login") or "") for y in issue_yorumlari(repo, sayfa["numara"],
-                                                                                          "Yorum sayfası")
+                                                                                          "Yorum sayfası", YORUM_IPUCU)
                    if not gh_bot_mu(y.get("user"))]
     alicilar, satir = yorum_bildirimi(girdi, [l for l in onceki if l], kisiler, kimlik)
     temel = {"girdi": girdi["id"], "baslik": girdi["baslik"], "girdi_url": girdi["url"], "ben": kimlik,
@@ -1790,12 +1804,12 @@ def yorumlar(argv):
         raise Stop(GIZLI_SAYFA_YOK.format(id=girdi["id"], ad=ilk_ad(kisiler, girdi["yazar"] or "gönderen")))
     on_kontrol(github=True)
     repo = uzak_slug(ayar, "ekip")
-    sayfalar, arama_tam = yorum_sayfalari(repo, girdi["id"])
-    notlar = [] if arama_tam else ["GitHub araması yanıt vermedi: yalnız son açılan sayfalara bakıldı."]
+    sayfalar, tam = yorum_sayfalari(repo, girdi["id"])
+    notlar = [] if tam else ["GitHub araması ya da son issue listesi yanıt vermedi: bazı yorum sayfaları görünmeyebilir."]
     gh_kisi = github_kisileri(kisiler)
     tum = []
     for s in sayfalar:
-        for y in issue_yorumlari(repo, s["numara"], "Yorum sayfası"):
+        for y in issue_yorumlari(repo, s["numara"], "Yorum sayfası", YORUM_IPUCU):
             kullanici = y.get("user") or {}
             login = str(kullanici.get("login") or "")
             kisi = gh_kisi.get(login.lower())

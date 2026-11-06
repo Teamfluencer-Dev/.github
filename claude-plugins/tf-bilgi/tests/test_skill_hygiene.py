@@ -139,6 +139,18 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("TF Bilgi bot in Slack", metin(PLUGIN / "skills" / "toplu-paylas" / "SKILL.md"))
         for md in SKILLS:
             self.assertNotIn("whom to hand the document to", metin(md), md)
+        # bot canlı olana kadar yedek yol: depoya yazabilen biri
+        self.assertIn("someone who can write to the repo", bilgi)
+        for ad in ("paylas", "toplu-paylas"):
+            self.assertIn("someone who can write to", metin(PLUGIN / "skills" / ad / "SKILL.md"), ad)
+        turler = metin(PLUGIN / "skills" / "paylas" / "references" / "turler.md")
+        self.assertIn("bot yanıt vermezse “alındı <id>”yi deponun `yazanlar` listesindekilerden", turler)
+
+    def test_comment_card_does_not_overpromise_notifications(self):
+        bolum = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md").split("\n## Yorum\n", 1)[1]
+        self.assertIn("never promise\n   more than it says", bolum)
+        self.assertIn("`BILDIRIM_YALNIZ`", bolum)
+        self.assertIn('never "bildirildi"', bolum)
 
     def test_only_the_helper_runs_in_bash(self):
         for md in SKILLS:

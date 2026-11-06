@@ -63,7 +63,9 @@ karar çıkmazsa ne olur. C-level'a gidiyorsa `dogrulayan` sorulur.
 6. Alındı: "Aldığını `/bilgi alindi <id>` ile ya da tek satırla bildir." Birden çok
    alıcıda alındı kişi başınadır: istek, her alıcı alındı deyince kapanır. Depoya yazma
    yetkisi olmayan alıcı aldığını Slack'teki TF Bilgi botuna "aldım <id>" yazarak
-   bildirir.
+   bildirir; bot yanıt vermezse “alındı <id>”yi deponun `yazanlar` listesindekilerden
+   birine yazar, o `/bilgi alindi <id> --kisi <alıcı>` ile onun adına kaydeder (onay
+   dosyasında `kaydeden`).
 
 Alt şablonu kitleye göre seç: depoda `sablonlar/devir-cs-degisiklik-brifi.md` ve
 `sablonlar/devir-hesap-devri.md` olarak durur; `kb taslak --tur devir --sablon

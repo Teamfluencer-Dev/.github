@@ -64,6 +64,11 @@ if komut == "kaydet":
 if komut == "tara":
     hedef = args[1]
     metin = sys.stdin.read() if hedef == "-" else Path(hedef).read_text(encoding="utf-8")
+    if "TARANAMADI" in metin:
+        print(json.dumps({"taranamadi": True, "neden": "metin katmani yok"}))
+        sys.exit(5)
+    if "TARA-COKTU" in metin:
+        sys.exit(1)
     bulgu = "GIZLI-ANAHTAR" in metin
     if "--maskele" in args:
         sys.stdout.write(metin.replace("GIZLI-ANAHTAR-123", "[maskelendi]"))
@@ -121,9 +126,15 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
             sys.exit(int(os.environ[ad]))
     if yol == "search/issues":
         cik("FAKE_GH_ARAMA_CIKIS")
+        if durum.get("arama_hata_kalan"):  # geçici arama hatası: ilk N arama düşer
+            durum["arama_hata_kalan"] -= 1
+            kaydet()
+            print("HTTP 502", file=sys.stderr)
+            sys.exit(1)
         aranan = alanlar["q"].split('"')[1].strip("[]")
         ogeler = [x for x in durum["issues"] if aranan in x["title"] and not x.get("aramada_yok")]
-        print(json.dumps({"total_count": len(ogeler), "items": ogeler}))
+        print(json.dumps({"total_count": len(ogeler), "items": ogeler,
+                          "incomplete_results": bool(os.environ.get("FAKE_GH_ARAMA_EKSIK"))}))
         sys.exit(0)
     if len(parca) == 3:  # repos/<sahip>/<ad>: push yetkisi
         cik("FAKE_GH_REPO_CIKIS")
@@ -162,6 +173,7 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
         no = parca[4]
         if yontem == "POST":
             cik("FAKE_GH_YAZ_CIKIS")
+            cik("FAKE_GH_YORUM_YAZ_CIKIS")  # sayfa açılır ama yorum yazılamaz (ör. kilitli)
             yorum = {"id": 900 + len(durum["comments"].get(no, [])), "body": json.load(sys.stdin)["body"],
                      "user": {"login": os.environ.get("FAKE_GH_LOGIN", ""), "type": "User"},
                      "created_at": "2026-11-05T09:30:00Z", "updated_at": "2026-11-05T09:30:00Z"}
@@ -171,6 +183,7 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
             print(json.dumps(yorum))
             sys.exit(0)
         if no in durum["comments"]:
+            cik("FAKE_GH_SAYFA_OKU_CIKIS")
             liste = durum["comments"][no]
         else:  # tercih issue'su
             cik("FAKE_GH_YORUM_CIKIS")
@@ -257,7 +270,8 @@ class Base(unittest.TestCase):
         os.environ["FAKE_GH_ISSUES"] = str(self.issues)
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
                      "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
-                     "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS"):
+                     "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
+                     "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS"):
             os.environ.pop(name, None)
         for key, value in (("user.name", "Test"), ("user.email", "test@ornek.test"),
                            ("init.defaultBranch", "main"), ("commit.gpgsign", "false")):
@@ -1171,7 +1185,9 @@ class YetkiTest(Base):
         self.assertTrue(out.startswith("Bu depoya belgeyi Slack'teki TF Bilgi botu ekler. Belgeyi bota gönder; kime, "
                                        "ne lazım, son tarih yaz. Aldığını bildirmek için bota 'aldım <kod>' yaz."), out)
         for parca in ("GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma yetkisi yok (depoya yalnız "
-                      "`.kb.json` `yazanlar` listesindekiler yazar)", "/bilgi kuyrugum", "/bilgi yorum"):
+                      "`.kb.json` `yazanlar` listesindekiler yazar)", "/bilgi kuyrugum", "/bilgi yorum",
+                      "Bot yanıt vermiyorsa ya da henüz açık değilse belgeyi depoya yazabilen biriyle paylaş; alındı "
+                      "için ona 'alındı <kod>' yaz, o `/bilgi alindi <kod> --kisi <anahtarın>` ile senin adına kaydeder."):
             self.assertIn(parca, out)
         for ad in ("Ayşe", "ayse", "Mert"):  # kişi adı verilmez
             self.assertNotIn(ad, out)
@@ -1201,7 +1217,7 @@ class YetkiTest(Base):
         self.ok("hazirla", "--yazma")
         out = self.stop("kb", "alindi", "B-20261029-ayse-01", "--kisi", "ayse")
         self.assertIn("yalnız kendi adınıza", out)
-        self.assertIn("TF Bilgi botuna 'aldım <kod>'", out)
+        self.assertIn("TF Bilgi botuna 'aldım <kod>' yazarak ya da depoya yazabilen birine 'alındı <kod>' diye", out)
         self.assertFalse((self.kok() / "onaylar").exists())
 
     def test_denetlenemezse_durmaz(self):
@@ -1429,6 +1445,9 @@ class YorumTest(Base):
         self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-02.md", GIZLI_GIRDI_METNI)
         os.environ.update({"FAKE_GH_LOGIN": "mert-gh", "FAKE_GH_PUSH": "false",
                            "TF_BILGI_SIMDI": "2026-11-05T10:00:00+03:00"})
+        bekleme = mock.patch.object(tf_bilgi, "ARAMA_TEKRAR_BEKLE", 0)
+        bekleme.start()
+        self.addCleanup(bekleme.stop)
         self.ok("hazirla")
         self.dosya = self.yorum_dosyasi("Bence 14.990 doğru.\nAma yıllıkta indirim şart.")
 
@@ -1460,16 +1479,19 @@ class YorumTest(Base):
         self.assertIn("etiketsiz (depoya yazma yetkin yok", r["yeni_sayfa"]["etiket"])
         self.assertEqual(r["ben"], {"login": "mert-gh", "kisi": "mert", "ben": "mert"})
         self.assertEqual([(a["kisi"], a["neden"]) for a in r["alicilar"]], [("ayse", "yazar"), ("zeynep", "alıcı")])
-        self.assertTrue(r["bildirim"].startswith("şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre"),
-                        r["bildirim"])
+        self.assertEqual(r["bildirim"], "şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre; kişi başı günde "
+                                        "en çok 5 yorum bildirimi, fazlası ertesi iş günü 08:30 günlük mesajında) · "
+                                        "bildirim yalnız KB deposunda bildirimler açıkken gider (pilotta yalnız pilot "
+                                        "kişilere)")
         self.assertEqual(r["karakter"], len("Bence 14.990 doğru.\nAma yıllıkta indirim şart."))
         self.assertEqual(self.api_cagrilari("POST"), [])  # plan hiçbir şey yazmaz
         arama = [c for c in self.api_cagrilari() if "search/issues" in c][0]
         self.assertIn('q=repo:Teamfluencer-Dev/tf-bilgi is:issue in:title "[B-20261105-ayse-01]"', arama)
         os.environ["TF_BILGI_SIMDI"] = "2026-11-05T20:00:00+03:00"
         r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
-        self.assertEqual(r["bildirim"], "sessiz saat (Per 20:00): Ayşe (yazar), Zeynep (alıcı) yarın 08:30 günlük "
-                                        "mesajında (Yeni yorumlar)")
+        self.assertTrue(r["bildirim"].startswith("sessiz saat (Per 20:00): Ayşe (yazar), Zeynep (alıcı) yarın 08:30 "
+                                                 "günlük mesajında (Yeni yorumlar) · bildirim yalnız KB deposunda"),
+                        r["bildirim"])
 
     def test_gonder_sayfayi_acar_sonra_ayni_sayfaya_yazar(self):
         r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
@@ -1546,16 +1568,81 @@ class YorumTest(Base):
         self.assertTrue(tf_bilgi.sayfa_basligi_mi("[B-20261105-ayse-01]", YORUM_GIRDI))
         self.assertFalse(tf_bilgi.sayfa_basligi_mi("[B-20261105-ayse-01]x", YORUM_GIRDI))
 
+    def aramalar(self):
+        return [c for c in self.api_cagrilari() if "search/issues" in c]
+
     def test_arama_yanit_vermezse_ikinci_sayfa_acilmaz(self):
         os.environ["FAKE_GH_ARAMA_CIKIS"] = "1"
         self.assertIn("ikinci bir sayfa açmamak için yazmadım",
                       self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(len(self.aramalar()), 2)  # bir kez daha bakıldı
         self.assertEqual(self.api_cagrilari("POST"), [])
         self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2"), yorumlar={10: []})
         r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")  # son issue'larda bulunur
         self.assertEqual((r["sayfa"]["numara"], r["yeni_sayfa"]), (10, False))
         os.environ["FAKE_GH_LISTE_CIKIS"] = "1"
-        self.assertIn("Yorum sayfası aranamadı", self.stop("yorumlar", YORUM_GIRDI))
+        self.assertIn("Yorum sayfası aranamadı", self.stop("yorumlar", YORUM_GIRDI))  # ikisi de düştü
+
+    def test_liste_yanit_vermezse_yeni_sayfa_acilmaz(self):
+        # #10 var ama arama dizini henüz görmedi; son issue listesi düştü
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2", aramada_yok=True), yorumlar={10: []})
+        os.environ["FAKE_GH_LISTE_CIKIS"] = "1"
+        self.assertIn("ikinci bir sayfa açmamak", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(self.api_cagrilari("POST"), [])
+        self.assertEqual(len(self.durum()["issues"]), 1)
+        # liste düşse de arama sayfayı görüyorsa yorum o sayfaya yazılır
+        d = self.durum()
+        d["issues"][0].pop("aramada_yok")
+        self.issues.write_text(json.dumps(d, ensure_ascii=False))
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual((r["sayfa"]["numara"], r["yeni_sayfa"]), (10, False))
+
+    def test_arama_eksik_donerse_yeni_sayfa_acilmaz(self):
+        os.environ["FAKE_GH_ARAMA_EKSIK"] = "1"
+        self.assertIn("eksik döndü", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder"))
+        self.assertEqual(self.durum()["issues"], [])
+        self.assertIn("ikinci bir sayfa açmamak", self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya))  # plan da
+
+    def test_arama_bir_kez_duserse_yeniden_bakar_ve_acar(self):
+        d = self.durum()
+        d["arama_hata_kalan"] = 1
+        self.issues.write_text(json.dumps(d))
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertEqual((r["yeni_sayfa"], r["sayfa"]["numara"]), (True, 20))
+        self.assertEqual(len(self.aramalar()), 2)
+        self.assertEqual(len(self.durum()["issues"]), 1)
+
+    def test_yazma_reddedilirse(self):
+        os.environ["FAKE_GH_YAZ_CIKIS"] = "1"  # sayfa açılamaz (403, issue'lar kapalı)
+        out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertIn("Yorum sayfası açma yapılamadı", out)
+        self.assertIn("okuma yetkisi olmalı", out)
+        self.assertEqual(self.durum()["issues"], [])
+        os.environ.pop("FAKE_GH_YAZ_CIKIS")
+        os.environ["FAKE_GH_YORUM_YAZ_CIKIS"] = "1"  # sayfa açılır, yorum yazılamaz (kilitli)
+        out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")
+        self.assertIn("Yorum yazma yapılamadı", out)
+        self.assertIn("Sayfa kilitliyse yorum yazılamaz", out)
+        self.assertEqual(len(self.durum()["issues"]), 1)
+        os.environ.pop("FAKE_GH_YORUM_YAZ_CIKIS")
+        r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya, "--gonder")  # sonraki çalıştırma aynı sayfayı bulur
+        self.assertEqual((r["yeni_sayfa"], r["sayfa"]["numara"]), (False, 20))
+        self.assertEqual(len(self.durum()["issues"]), 1)
+
+    def test_okuma_hatasinda_dogru_ipucu(self):
+        self.issue_ekle(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2"), yorumlar={10: []})
+        os.environ["FAKE_GH_SAYFA_OKU_CIKIS"] = "1"
+        for argv in (("yorumlar", YORUM_GIRDI), ("yorum", YORUM_GIRDI, "--dosya", self.dosya)):
+            out = self.stop(*argv)
+            self.assertIn("Yorum sayfası okunamadı", out)
+            self.assertIn("yorum için yazma yetkisi gerekmez", out)
+            self.assertNotIn("okuma-yazma", out)
+
+    def test_tarama_yapilamazsa_yazmaz(self):
+        for metin, cikis in (("TARANAMADI", 5), ("TARA-COKTU", 1)):
+            out = self.stop("yorum", YORUM_GIRDI, "--dosya", self.yorum_dosyasi(metin, "t%d" % cikis), "--gonder")
+            self.assertIn(f"Yorum taranamadı (kb.py tara çıkış {cikis}); yorumu yazmadım", out)
+        self.assertEqual(self.api_cagrilari("POST"), [])
 
     def test_gizli_girdi_reddedilir_githuba_gidilmez(self):
         out = self.stop("yorum", "B-20261105-ayse-02", "--dosya", self.dosya, "--gonder")
@@ -1609,6 +1696,18 @@ class YorumTest(Base):
         self.assertIn("Yorumda sır ya da kişisel veri olabilir (sir); yorumu yazmadım", out)
         self.assertNotIn("GIZLI-ANAHTAR-123", out)
         self.assertEqual(len(self.api_cagrilari("POST")), once)
+
+    def test_yorumlar_birden_cok_sayfa_birlesir(self):
+        self.issue_ekle(gh_issue(12, "[B-20261105-ayse-01] ikinci sayfa"), gh_issue(10, "[B-20261105-ayse-01] ilk"),
+                        yorumlar={10: [gh_yorum(1, "ayse-gh", "A1", "2026-11-05T06:00:00Z"),
+                                       gh_yorum(3, "ayse-gh", "A3", "2026-11-05T08:00:00Z")],
+                                  12: [gh_yorum(2, "mert-gh", "B2", "2026-11-05T07:00:00Z")]})
+        r = self.ok("yorumlar", YORUM_GIRDI)
+        self.assertEqual([(y["metin"], y["sayfa"]) for y in r["yorumlar"]], [("A1", 10), ("B2", 12), ("A3", 10)])
+        self.assertEqual([s["numara"] for s in r["sayfalar"]], [10, 12])
+        self.assertEqual(r["sayfa"]["numara"], 10)
+        self.assertIn("Bu girdinin 2 yorum sayfası var; hepsinin yorumları birlikte gösterildi, yeni yorum #10'e yazılır.",
+                      r["notlar"])
 
     def test_yorumlar_eskiden_yeniye_adlarla(self):
         self.assertEqual(self.ok("yorumlar", YORUM_GIRDI)["satir"],

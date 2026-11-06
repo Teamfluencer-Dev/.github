@@ -32,8 +32,10 @@ only, with the user's own `gh` login.
 Who can add documents (decision of 6 Nov 2026): only the people in the repo's `.kb.json`
 `yazanlar` and the TF Bilgi bot in Slack. Everyone else sends the document to the bot
 in a Slack DM (with who it is for, what is needed, by when) and acknowledges a handoff
-by writing `aldım <girdi-id>` to the bot. Reading (`/bilgi`) and comments
-(`/bilgi yorum`, `/bilgi yorumlar`) work with read access.
+by writing `aldım <girdi-id>` to the bot. Until the bot is live (or if it does not answer)
+the fallback stays: share the document with someone who can write to the repo, and send
+them “alındı <girdi-id>”; they record it with `/bilgi alindi <girdi-id> --kisi <alıcı>`.
+Reading (`/bilgi`) and comments (`/bilgi yorum`, `/bilgi yorumlar`) work with read access.
 
 ## Steps
 
@@ -158,12 +160,16 @@ GitHub call. **The comment text never goes into a shell argument, heredoc or `ec
    bildirim : <bildirim>
    yorum    : <the comment, quoted, first ~300 characters>
    ```
-   plus `notlar` as one line each.
+   plus `notlar` as one line each. The `bildirim` line is shown as given; never promise
+   more than it says (the notification Action in the KB repo sends only when it is
+   switched on, and while a pilot runs — Actions variable `BILDIRIM_YALNIZ` — only to
+   the pilot people; tf-bilgi `bildir.py yorum` may also not be live yet).
 4. AskUserQuestion: question "Yorum bu sayfaya senin GitHub hesabınla yazılsın mı?",
    header "Yorum", options **Gönder** / **Vazgeç**.
    Vazgeç: `TFB temizle <D>` and reply "Vazgeçildi; yorum yazılmadı."
 5. Gönder: `TFB yorum <id> --dosya <D>/yorum.md --gonder [--yonetim]` (the helper scans
    the text again, opens the page if missing, then posts), then `TFB temizle <D>`.
    Reply in two or three lines: `Yorum yazıldı: <yorum_url>`; if `yeni_sayfa` is true,
-   `Yorum sayfası açıldı: #<sayfa.numara> · <etiket>`; then `Bildirim: <bildirim>`.
+   `Yorum sayfası açıldı: #<sayfa.numara> · <etiket>`; then `Bildirim: <bildirim>` as
+   given (never "bildirildi": the helper only writes the comment, the KB Action notifies).
    Exit 2 → relay as-is, `TFB temizle <D>`.
