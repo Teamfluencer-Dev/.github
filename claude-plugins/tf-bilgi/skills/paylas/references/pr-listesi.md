@@ -3,7 +3,7 @@
 Read this only when the user hands over PRs (numbers like `api#1976`, PR links,
 "PR'larımı paylaş", "PR'larım", "merge sırası"). The table is built from GitHub instead of
 from memory, written to one file and shared with the single `hizli` command of SKILL.md
-step 4. No question, no card. `TFB` = `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py"`
+step 5. No question, no card. `TFB` = `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py"`
 (always type the full form).
 
 ## PR list mode
@@ -36,8 +36,9 @@ When the user hands over PRs (numbers like `api#1976`, PR links, "PR'larım",
 1. Write the file with the Write tool to `~/.tf-bilgi/gecici/pr-listesi-<YYYYMMDD-HHMMSS>.md`
    (absolute path: the home folder + `/.tf-bilgi/gecici/…`): first line `# PR listesi`,
    then the table, the `hatalar` line if any, "Nasıl doğrulanır" and "Bilinen tuzaklar".
-2. Run the single `hizli` command of SKILL.md step 4 with `--ek <that file>` and the
-   user's own words in the heredoc (same `--yonetim` / `--haber simdi` rules). The helper
-   deletes the file under `gecici/` after it is sent.
-3. Reply as in SKILL.md step 5: the `satir` line (plus one short line when `hatalar` was
+2. If the user gave other words, Write them to the note file as in SKILL.md step 4.
+3. Run the single `hizli` command of SKILL.md step 5 with `--ek '<that file>'` (and
+   `--not-dosya` when there is a note; same `--yonetim` / `--haber simdi` rules). The
+   helper deletes both files under `gecici/` after they are sent.
+4. Reply as in SKILL.md step 6: the `satir` line (plus one short line when `hatalar` was
    not empty).

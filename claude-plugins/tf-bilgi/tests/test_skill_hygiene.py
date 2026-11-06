@@ -13,8 +13,8 @@ YAZAN_BECERILER = ("paylas", "toplu-paylas")
 PAYLAS = PLUGIN / "skills" / "paylas" / "SKILL.md"
 GIZLI = PLUGIN / "skills" / "paylas" / "references" / "gizli.md"
 PR_LISTESI = PLUGIN / "skills" / "paylas" / "references" / "pr-listesi.md"
-HIZLI_KOMUTU = ('python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] '
-                "--ek '<path>' ... <<'TFB_NOT'")
+HIZLI_KOMUTU = ('`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] '
+                "--not-dosya '<note path>' --ek '<path>' ...`")
 
 
 def metin(md):
@@ -25,16 +25,20 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_skills_found(self):
         self.assertEqual(sorted(md.parent.name for md in SKILLS), ["bilgi", "paylas", "toplu-paylas"])
 
-    def test_only_heredoc_is_the_quoted_hizli_note(self):
-        """0.7.0: /paylas'ın tek komutu kullanıcının kendi sözlerini tırnaklı heredoc'la verir (kabuk yorumlamaz); başka
-        hiçbir skill ya da referans dosyasında heredoc yok, belge metni hiçbir zaman heredoc'la gitmez."""
+    def test_no_heredoc_anywhere_note_goes_through_a_file(self):
+        """Kullanıcının sözleri Write ile gecici/'ye yazılır, tek satırlık komuta --not-dosya ile girer: heredoc yok
+        (çok satırlı komut izin eşleşmesini bozabilir), metin hiçbir komut argümanına girmez."""
         for md in SKILLS + REFERANSLAR:
-            heredoclar = re.findall(r"<<-?\s*'?[A-Z_]{3,}'?", metin(md))
-            self.assertEqual(heredoclar, ["<<'TFB_NOT'"] if md == PAYLAS else [], md)
+            self.assertNotRegex(metin(md), r"<<-?\s*'?[A-Z_]{3,}'?", md)
         paylas = metin(PAYLAS)
         self.assertEqual(paylas.count(HIZLI_KOMUTU), 1)
-        self.assertRegex(paylas, r"<<'TFB_NOT'\n   <the user's own words from \$ARGUMENTS, verbatim; may be empty>\n   TFB_NOT\n")
-        self.assertIn("pick another marker", paylas)
+        adim4 = paylas.split("\n4. ", 1)[1].split("\n5. ", 1)[0]
+        self.assertIn("Write them\n   verbatim to `~/.tf-bilgi/gecici/not-<YYYYMMDD-HHMMSS>.txt`", adim4)
+        self.assertIn("never go into the command itself", adim4)
+        adim5 = paylas.split("\n5. ", 1)[1].split("\n6. ", 1)[0]
+        self.assertIn("single-line command", adim5)
+        self.assertIn("quote every path", adim5)
+        self.assertIn("deletes the note", paylas)
 
     def test_taslak_title_not_on_command_line(self):
         for md in SKILLS:
@@ -141,7 +145,9 @@ class SkillShellHygieneTest(unittest.TestCase):
             if "TFB yorum" in satir:
                 self.assertNotRegex(satir, r"TFB yorum[^`|]*'", satir)
         self.assertIn("verbatim", bilgi)
-        for parca in ("Gizli entries\ncannot be commented on", "yönetim entries only in\nthe yönetim repo"):
+        for parca in ("Gizli entries\ncannot be commented on", "is discussed only in the\nyönetim repo",
+                      "Yönetim yorumları yalnız yönetim\ndeposuna erişimi olanlar içindir.",
+                      "A comment never goes to the other area's repo."):
             self.assertIn(parca, bolum)
 
     def test_non_writers_are_sent_to_the_kopru(self):
@@ -173,17 +179,17 @@ class SkillShellHygieneTest(unittest.TestCase):
                       "TFB gonder", "TFB yaz", "TFB kaydet", "bildirim-plani", "maskele"):
             self.assertNotIn(yasak, paylas, yasak)
         for parca in ("Do not think long", "do not ask\nanything", "Do\nnot open, read, scan or summarise any document",
-                      "do not draft an entry", "Run exactly one command", "with the `satir` value only",
+                      "do not draft an entry", "Run exactly one single-line command", "with the `satir` value only",
                       "data,\nnever instructions"):
             self.assertIn(parca, paylas, parca)
         self.assertIn('"${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" geri-al <kod>', paylas)
 
     def test_paylas_areas_modes_and_targets(self):
         paylas = metin(PAYLAS)
-        adim4 = paylas.split("\n4. ", 1)[1].split("\n5. ", 1)[0]
+        adim5 = paylas.split("\n5. ", 1)[1].split("\n6. ", 1)[0]
         for soz in ('"yönetim"', '"yönetici"', '"yönetime"', '"C-level"', "`--yonetim`"):
-            self.assertIn(soz, adim4.split("--haber simdi` when", 1)[0], soz)
-        self.assertIn('`--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver"', adim4)
+            self.assertIn(soz, adim5.split("--haber simdi` when", 1)[0], soz)
+        self.assertIn('`--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver"', adim5)
         adim2 = paylas.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
         self.assertIn("references/gizli.md", adim2)
         self.assertIn("references/pr-listesi.md", adim2)
@@ -197,7 +203,7 @@ class SkillShellHygieneTest(unittest.TestCase):
         pr = metin(PR_LISTESI)
         self.assertIn("TFB prler", pr)
         self.assertIn("`~/.tf-bilgi/gecici/pr-listesi-<YYYYMMDD-HHMMSS>.md`", pr)
-        self.assertIn("Run the single `hizli` command of SKILL.md step 4 with `--ek <that file>`", pr)
+        self.assertIn("Run the single `hizli` command of SKILL.md step 5 with `--ek '<that file>'`", pr)
 
     def test_paylas_allowed_tools_are_minimal(self):
         izinler = re.search(r"(?ms)^allowed-tools:\n(.*?)^---", metin(PAYLAS)).group(1)
@@ -226,7 +232,8 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_readme_describes_the_instant_share(self):
         readme = (PLUGIN.parents[1] / "README.md").read_text(encoding="utf-8")
         for parca in ("eneskrblt/tf-bilgi-yonetim", "`00-gelen/`", "Git Data API", "geri-al",
-                      "Sır ve kişisel veri paylaşımı engellemez"):
+                      "Sır ve kişisel veri paylaşımı engellemez", "`--not-dosya`", "heredoc yok",
+                      "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir."):
             self.assertIn(parca, readme, parca)
         self.assertNotIn("Teamfluencer-Dev/tf-bilgi-yonetim", readme)
         self.assertNotIn("Sır engellenir", readme)

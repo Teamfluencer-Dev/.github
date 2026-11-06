@@ -69,14 +69,19 @@ plugin PR that adds a hash links that KB PR and its head SHA (KB CLAUDE.md §12)
                                  page to open, who is notified). With --gonder: scan
                                  with kb.py tara, open the page if missing, post the
                                  comment with the user's own gh login (read access is
-                                 enough). Refused for gizli and yönetim entries.
+                                 enough). Refused for gizli entries. A yönetim entry (--yonetim
+                                 or a non-ekip id prefix) uses the yönetim repo's own pages,
+                                 only for people who can read that repo.
   yorumlar GIRDI_ID [--son N] [--yonetim]
                                  Read-only: the page's comments, oldest first, names
                                  from kisiler.json `github`. Gizli: no public page.
 
 Hızlı paylaşım (/paylas), 0.7.0:
 
-  hizli [--yonetim] [--haber simdi] [--ek PATH]...   (the user's own words on stdin, may be empty)
+  hizli [--yonetim] [--haber simdi] [--not-dosya F] [--ek PATH]...
+                                 F: the user's own words, written verbatim under <cache>/gecici/
+                                 with the Write tool (stdin is a fallback); deleted after a
+                                 successful send, like --ek files under gecici/.
                                  One command, no questions, no draft: the files and the words
                                  (govde.md) go to the inbox, the librarian classifies them at
                                  its next run. A writer (push permission, checked with gh and
@@ -132,6 +137,7 @@ import json
 import os
 import re
 import secrets
+import select
 import shutil
 import subprocess
 import sys
@@ -1567,9 +1573,9 @@ YORUM_KONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # sekme ve sat�
 AYLAR_KISA = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
 YORUM_IPUCU = ("GitHub hesabının bu depoya okuma yetkisi olmalı ve `gh auth status` geçerli olmalı (yorum için yazma "
                "yetkisi gerekmez). Sayfa kilitliyse yorum yazılamaz.")
-YONETIM_YORUM_YOK = ("Yönetim girdilerinin yorum sayfası yalnız yönetim deposunda (tf-bilgi-yonetim) açılır; o depo "
-                     "GitHub'da henüz yok, bu yüzden yorum yazılamaz ve okunamaz. Yorumu ekip deposuna da yazmıyorum "
-                     "(yönetim içeriği ekibe açılırdı); görüşünü belgenin yazarına doğrudan ilet.")
+# Yönetim girdisinin yorum sayfası yönetim deposundadır (eneskrblt/tf-bilgi-yonetim); yorum hiçbir zaman ekip deposuna
+# yazılmaz (yönetim içeriği ekibe açılırdı). Depoyu okuyamayana ve köprüde (köprü yalnız ekip) bu kısa mesaj gider.
+YONETIM_YORUM_YOK = "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir."
 GIZLI_YORUM_YOK = ("{id} gizli bir girdi: yorum yazılmaz. Yorum sayfası depoyu okuyan herkese açık olur ve yorum "
                    "belgenin içeriğini sızdırabilir. Görüşünü göndericiye ({ad}) doğrudan ilet.")
 GIZLI_SAYFA_YOK = ("{id} gizli bir girdi: herkese açık yorum sayfası yok (yorum belgenin içeriğini sızdırabileceği için "
@@ -1626,8 +1632,8 @@ def girdi_alanlari(metin):
     return sonuc
 
 
-def girdi_oku(kok, ayar, girdi_id):
-    """Yayımlanmış (origin/main) girdinin yorum için gereken alanları."""
+def girdi_oku(kok, ayar, girdi_id, repo=None):
+    """Yayımlanmış (origin/main) girdinin yorum için gereken alanları (repo: bağlantının deposu; yoksa ekip)."""
     m = GIRDI_ID_RE.match(girdi_id)
     yol = f"girdiler/{m.group(2)}/{m.group(3)}/{girdi_id}.md"
     proc = git(kok, "show", f"origin/{DAL}:{yol}", check=False)
@@ -1638,7 +1644,7 @@ def girdi_oku(kok, ayar, girdi_id):
     ist = alanlar.get("istek") if isinstance(alanlar.get("istek"), dict) else {}
     kimden = ist.get("kimden")
     kimden = kimden if isinstance(kimden, list) else ([kimden] if kimden else [])
-    return {"id": girdi_id, "yol": yol, "url": baglanti(uzak_slug(ayar, "ekip"), yol),
+    return {"id": girdi_id, "yol": yol, "url": baglanti(repo or uzak_slug(ayar, "ekip"), yol),
             "baslik": tek_satir(alanlar.get("baslik") or girdi_id, 200), "tldr": tek_satir(alanlar.get("tldr"), 300),
             "yazar": alanlar.get("yazar") if isinstance(alanlar.get("yazar"), str) else None,
             "kimden": list(dict.fromkeys(str(k) for k in kimden)), "alan": alanlar.get("alan"),
@@ -1646,23 +1652,52 @@ def girdi_oku(kok, ayar, girdi_id):
 
 
 def yorum_hedefi(girdi_id, yonetim):
-    """(kok, ayar, girdi): yalnız ekip girdisi. Yönetim girdisinde GitHub'a hiç gidilmeden durur."""
+    """(kok, ayar, girdi, alan, repo). Ekip girdisi ekip deposunda; yönetim girdisi (`--yonetim` ya da kimliği ekip
+    önekiyle başlamayan) yönetim deposunda: önce okuma yetkisi denetlenir (yoksa kısa mesajla durur), sonra yönetim
+    önbellek klonu kurulur ya da güncellenir. Yorum hiçbir zaman öbür alanın deposuna yazılmaz."""
     girdi_id = (girdi_id or "").strip()
     m = GIRDI_ID_RE.match(girdi_id)
     if not m:
         raise Stop(f"Girdi kimliği anlaşılmadı: {girdi_id!r} (örnek: B-20261105-ayse-01).")
-    if yonetim:
-        raise Stop(YONETIM_YORUM_YOK)
-    kok = mevcut_kok("ekip")
-    ayar = depo_ayari(kok, "ekip")
-    onek = ayar.get("girdi_onek") or "B"
+    alan = "yonetim" if yonetim else "ekip"
+    if alan == "ekip":
+        kok = mevcut_kok("ekip")
+        onek = depo_ayari(kok, "ekip").get("girdi_onek") or "B"
+        if m.group(1) != onek:
+            alan = "yonetim"  # ekip girdisi değil: yönetim deposunda aranır
+    if alan == "yonetim":
+        kok, repo = yonetim_klonu()
+    else:
+        repo = uzak_slug(depo_ayari(kok, "ekip"), "ekip")
+    ayar = depo_ayari(kok, alan)
+    onek = ayar.get("girdi_onek") or ("B" if alan == "ekip" else "BY")
     if m.group(1) != onek:
-        raise Stop(f"{girdi_id} ekip deposunun girdisi değil (ekip girdileri {onek}- ile başlar; yönetim girdileri ayrı "
-                   f"depodadır). {YONETIM_YORUM_YOK}")
-    girdi = girdi_oku(kok, ayar, girdi_id)
-    if girdi["alan"] not in (None, "ekip"):
-        raise Stop(f"{girdi_id} ekip alanının girdisi değil. {YONETIM_YORUM_YOK}")
-    return kok, ayar, girdi
+        raise Stop(f"{girdi_id} {'ekip' if alan == 'ekip' else 'yönetim'} deposunun girdisi değil (bu deponun girdileri "
+                   f"{onek}- ile başlar).")
+    girdi = girdi_oku(kok, ayar, girdi_id, repo)
+    if girdi["alan"] not in (None, alan):
+        raise Stop(f"{girdi_id} {alan} alanının girdisi değil; yorum yalnız kendi alanının deposuna yazılır.")
+    return kok, ayar, girdi, alan, repo
+
+
+def yonetim_klonu():
+    """Yönetim deposu: GitHub'da okuma yetkisi yoksa kısa mesajla durur; varsa önbellek klonu kurulur ya da güncellenir.
+    → (klon, GitHub deposu). Depo, klonun uzağından (TF_BILGI_UZAK_YONETIM ya da varsayılan) alınır; yönetim .kb.json'unun
+    `uzak` alanı eski org adını taşıyabilir."""
+    deger, github = uzak_kaynagi("yonetim")
+    if github:
+        on_kontrol(github=True)
+        if yazma_yetkisi(deger, True) is None:  # repos/<depo> okunamadı: depo görünmüyor ya da erişim yok
+            raise Stop(YONETIM_YORUM_YOK)
+    kok = klon_yolu("yonetim")
+    try:
+        if kok.exists():
+            guncelle(kok, deger, github, [])
+        else:
+            klonla(deger, github, kok)
+    except Stop as e:
+        raise Stop(f"{YONETIM_YORUM_YOK} ({tek_satir(str(e), 300)})")
+    return kok, deger if github else uzak_slug(depo_ayari(kok, "yonetim"), "yonetim")
 
 
 def sayfa_basligi_mi(baslik, girdi_id):
@@ -1748,17 +1783,17 @@ def yorum_kimligi(kok, notlar):
     return {"login": login, "kisi": gh_kisi, "ben": gh_kisi or ben}
 
 
-def yorum_bildirimi(girdi, onceki_kisiler, kisiler, kimlik):
+def yorum_bildirimi(girdi, onceki_kisiler, kisiler, kimlik, alan="ekip"):
     """bildir.py yorum ile aynı kural: girdinin yazarı, istek alıcıları ve sayfaya daha önce yazanlar (kişi anahtarları:
-    kisiler.json github hesabıyla ya da köprü yorumunun `kisi=` satırıyla çözülmüş), yorumu yazan hariç; ekip alanının
-    üyesi olmayana gitmez. ([alıcılar], tek satır)."""
+    kisiler.json github hesabıyla ya da köprü yorumunun `kisi=` satırıyla çözülmüş), yorumu yazan hariç; girdinin
+    alanının üyesi olmayana gitmez. ([alıcılar], tek satır)."""
     sirali = [(girdi["yazar"], "yazar")] + [(k, "alıcı") for k in girdi["kimden"]]
     sirali += [(k, "önceki yorumcu") for k in onceki_kisiler]
     alicilar, gorulen = [], set()
     for kisi, neden in sirali:
         if kisi and kisi != kimlik["kisi"] and kisi not in gorulen:
             gorulen.add(kisi)
-            uye = "ekip" in ((kisiler.get(kisi) or {}).get("alanlar") or [])
+            uye = alan in ((kisiler.get(kisi) or {}).get("alanlar") or [])
             alicilar.append({"kisi": kisi, "ad": ilk_ad(kisiler, kisi), "neden": neden, "alan_uyesi": uye})
     gidecek = [f"{a['ad']} ({a['neden']})" for a in alicilar if a["alan_uyesi"]]
     an = simdi()
@@ -1772,7 +1807,7 @@ def yorum_bildirimi(girdi, onceki_kisiler, kisiler, kimlik):
                             f"{YORUM_GUNLUK_SINIR} yorum bildirimi, fazlası ertesi iş günü 08:30 günlük mesajında)")
     else:
         parcalar.append("kimseye bildirim gitmez")
-    parcalar += [f"{yonelme(a['ad'])} bildirim gitmez (ekip alanının üyesi değil)" for a in alicilar
+    parcalar += [f"{yonelme(a['ad'])} bildirim gitmez ({alan} alanının üyesi değil)" for a in alicilar
                  if not a["alan_uyesi"]]
     if kimlik["kisi"] is None and kimlik["ben"] in gorulen:
         parcalar.append("kendi yorumunun bildirimi sana da gider (kisiler.json'da GitHub hesabın yok)")
@@ -1870,7 +1905,7 @@ def yorum_tara(kok, yol):
 
 
 def yorum(argv):
-    """/bilgi yorum: plan (salt okuma) ya da --gonder ile yaz. Gizli ve yönetim girdisinde durur."""
+    """/bilgi yorum: plan (salt okuma) ya da --gonder ile yaz. Gizli girdide durur; yönetim girdisi yönetim deposunda."""
     parser = argparse.ArgumentParser(prog="tf_bilgi.py yorum")
     parser.add_argument("girdi")
     parser.add_argument("--yonetim", action="store_true")
@@ -1879,7 +1914,7 @@ def yorum(argv):
     args = parser.parse_args(argv)
     if yol_sec() == "kopru":
         return yorum_kopru(args)
-    kok, ayar, girdi = yorum_hedefi(args.girdi, args.yonetim)
+    kok, ayar, girdi, alan, repo = yorum_hedefi(args.girdi, args.yonetim)
     kisiler = kisileri_oku(kok)
     if girdi["gizli"]:
         raise Stop(GIZLI_YORUM_YOK.format(id=girdi["id"], ad=ilk_ad(kisiler, girdi["yazar"] or "gönderen")))
@@ -1888,7 +1923,6 @@ def yorum(argv):
     notlar = []
     kimlik = yorum_kimligi(kok, notlar)
     yorum_tara(kok, yol)
-    repo = uzak_slug(ayar, "ekip")
     sayfalar, tam = yorum_sayfalari(repo, girdi["id"])
     if not sayfalar and not tam:  # arama ile liste ayrıştı: bir kez daha bak, yine emin değilsen yeni sayfa açma
         time.sleep(ARAMA_TEKRAR_BEKLE)
@@ -1899,9 +1933,10 @@ def yorum(argv):
     if len(sayfalar) > 1:
         notlar.append(f"Bu girdinin {len(sayfalar)} yorum sayfası var ("
                       + ", ".join(f"#{s['numara']}" for s in sayfalar) + f"); yorum en eskisine (#{sayfa['numara']}) yazılır.")
-    alicilar, satir = yorum_bildirimi(girdi, onceki_yorumcular(repo, sayfa, kisiler, kopru_girisi(ayar)), kisiler, kimlik)
+    alicilar, satir = yorum_bildirimi(girdi, onceki_yorumcular(repo, sayfa, kisiler, kopru_girisi(ayar)), kisiler, kimlik,
+                                      alan)
     temel = {"girdi": girdi["id"], "baslik": girdi["baslik"], "girdi_url": girdi["url"], "ben": kimlik,
-             "alicilar": alicilar, "bildirim": satir, "notlar": notlar}
+             "alicilar": alicilar, "bildirim": satir, "notlar": notlar, "alan": alan, "depo": repo}
     if not args.gonder:
         yeni = None if sayfa else {"baslik": f"[{girdi['id']}] {girdi['baslik']}", "etiket": etiket_plani(repo)[1]}
         return {**temel, "sayfa": sayfa, "yeni_sayfa": yeni, "karakter": len(metin), "yazildi": False}
@@ -1937,12 +1972,11 @@ def yorumlar(argv):
     args = parser.parse_args(argv)
     if yol_sec() == "kopru":
         return yorumlar_kopru(args)
-    kok, ayar, girdi = yorum_hedefi(args.girdi, args.yonetim)
+    kok, ayar, girdi, alan, repo = yorum_hedefi(args.girdi, args.yonetim)
     kisiler = kisileri_oku(kok)
     if girdi["gizli"]:
         raise Stop(GIZLI_SAYFA_YOK.format(id=girdi["id"], ad=ilk_ad(kisiler, girdi["yazar"] or "gönderen")))
     on_kontrol(github=True)
-    repo = uzak_slug(ayar, "ekip")
     sayfalar, tam = yorum_sayfalari(repo, girdi["id"])
     notlar = [] if tam else ["GitHub araması ya da son issue listesi yanıt vermedi: bazı yorum sayfaları görünmeyebilir."]
     gh_kisi = github_kisileri(kisiler)
@@ -3042,9 +3076,16 @@ def hizli_yol(alan):
 
 
 def stdin_metni():
-    """Kullanıcının kendi sözleri (skill'in tırnaklı heredoc'u); stdin terminalse boş. Geçersiz UTF-8 bayt değiştirilir."""
+    """--not-dosya verilmediyse yedek: stdin'den not (ör. elle `<<'X'` ya da boru). Terminalse ya da yarım saniyede
+    hiçbir şey gelmezse boş (açık kalmış bir stdin komutu asmasın). Geçersiz UTF-8 bayt değiştirilir."""
     try:
         if sys.stdin is None or sys.stdin.isatty():
+            return ""
+        try:
+            hazir = select.select([sys.stdin], [], [], 0.5)[0]
+        except (OSError, ValueError, TypeError):  # dosya tanıtıcısı yok (testlerdeki StringIO) ya da desteklenmiyor
+            hazir = [sys.stdin]
+        if not hazir:
             return ""
         tampon = getattr(sys.stdin, "buffer", None)
         return tampon.read().decode("utf-8", "replace") if tampon is not None else sys.stdin.read()
@@ -3103,15 +3144,24 @@ def hizli_satir(kod, ek_sayisi, notlu, alan, dosyalama):
 
 
 def hizli(argv):
-    """/paylas: kullanıcının sözleri (stdin) + ekler → gelen kutusu, tek satır makbuz. Belge okunmaz, taslak yoktur,
+    """/paylas: kullanıcının sözleri (--not-dosya, yoksa stdin) + ekler → gelen kutusu, tek satır makbuz. Belge okunmaz, taslak yoktur,
     soru sorulmaz. Yazan: GitHub'a tek commit; köprü anahtarı olan: köprü (yalnız ekip); ikisi de yoksa durur."""
     parser = argparse.ArgumentParser(prog="tf_bilgi.py hizli")
     parser.add_argument("--yonetim", action="store_true", help="yönetim alanı (yönetim deposu)")
     parser.add_argument("--haber", choices=("simdi", "hemen"), help="simdi: alıcılara sessiz saati beklemeden haber")
     parser.add_argument("--ek", action="append", default=[], help="paylaşılan dosya (mutlak yol); birden çok kez")
+    parser.add_argument("--not-dosya", dest="not_dosya",
+                        help="kullanıcının kendi sözleri: gecici/ altında, Write aracıyla yazılmış dosya (yoksa stdin)")
     args = parser.parse_args(argv)
     alan, haber = alan_sec(args.yonetim), ("simdi" if args.haber == "simdi" else "hemen")
-    not_metni = stdin_metni()
+    not_yolu = None
+    if args.not_dosya:
+        not_yolu = gecici_alti(args.not_dosya, "--not-dosya")
+        if not not_yolu.is_file():
+            raise Stop(f"Not dosyası yok: {args.not_dosya}")
+        not_metni = not_yolu.read_bytes().decode("utf-8", "replace")
+    else:
+        not_metni = stdin_metni()
     notlu = bool(not_metni.strip())
     dosyalar, kullanilan, gorulen = [], set(), set()
     for ek in args.ek:
@@ -3138,7 +3188,8 @@ def hizli(argv):
         dosyalama = bit.get("dosyalama") or bas.get("dosyalama") or sonraki_tur(an_tr())
     gecmise_yaz(kod, alan, yol, slug, klasor)
     gecici_kok = (onbellek_koku() / "gecici").resolve()
-    for _, gercek, _ in dosyalar:  # /paylas'ın gecici/'ye yazdığı not kopyaları gönderildi: bekletilmez
+    silinecek = [gercek for _, gercek, _ in dosyalar] + ([not_yolu] if not_yolu else [])
+    for gercek in silinecek:  # /paylas'ın gecici/'ye yazdığı not ve metin kopyaları gönderildi: bekletilmez
         if gecici_kok in gercek.parents:
             try:
                 gercek.unlink()
@@ -3382,7 +3433,7 @@ KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "temizle":
             "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih,
             "gizli-alicilar": gizli_alicilar, "yorum": yorum, "yorumlar": yorumlar, "kur": kur, "gonder": gonder,
             "geri-al": geri_al, "oku": oku, "ara": ara, "girdi": girdi, "alindi": alindi, "hizli": hizli}
-KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim] [--haber simdi] [--ek YOL]... < not | "
+KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim] [--haber simdi] [--not-dosya F] [--ek YOL]... | "
             "hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
             "maskele [--yonetim] DOSYA [--dizin D] | temizle YOL... | yaz [--yonetim] [--dosya F] [--uzerine] | "
             "kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL... | prler [REF...] [--repo R] | "

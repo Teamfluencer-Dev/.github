@@ -1412,6 +1412,7 @@ class GizliAlicilarTest(Base):
 
 
 YORUM_GIRDI = "B-20261105-ayse-01"
+YONETIM_GIRDI = "BY-20261105-ayse-01"
 YORUM_GIRDI_METNI = ("---\nid: B-20261105-ayse-01\nbaslik: \"Abonelik planı v2\"\ntur: analiz\nkonu: K-0001\nalan: ekip\n"
                      "hedef_kitle: [dev]\nistek:\n  tip: INCELE\n  kimden: [mert, zeynep]\n  son_tarih: null\n"
                      "tldr: \"Growth 14.990'a çıksın mı? @mert bakmalı.\"\ndurum: yayinda\nyazar: ayse\n"
@@ -1441,7 +1442,8 @@ def gh_yorum(no, login, govde, zaman, tip="User", duzenlendi=None):
 
 class YorumTest(Base):
     """/bilgi yorum ve /bilgi yorumlar: girdi başına bir GitHub issue (yorum sayfası), ilk yorumda açılır; okuma
-    yetkisi yeter, kişinin kendi gh hesabıyla; metin yalnız dosyayla; gizli ve yönetim girdisinde durur."""
+    yetkisi yeter, kişinin kendi gh hesabıyla; metin yalnız dosyayla; gizli girdide durur; yönetim girdisi yönetim
+    deposunun sayfalarına gider (o depoyu okuyabilene)."""
 
     def setUp(self):
         super().setUp()
@@ -1661,17 +1663,53 @@ class YorumTest(Base):
         self.assertIn("herkese açık yorum sayfası yok", out)
         self.assertEqual(self.api_cagrilari(), [])
 
-    def test_yonetim_girdisi_reddedilir(self):
+    def yonetim_girdisi(self):
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"]["zeynep"] = {"ad": "Zeynep Örnek", "alanlar": ["ekip"], "eposta": None, "github": None}
+        self.seed_commit("yonetim", "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        metin = YORUM_GIRDI_METNI.replace("B-20261105-ayse-01", YONETIM_GIRDI).replace("alan: ekip", "alan: yonetim")
+        self.seed_commit("yonetim", f"girdiler/2026/11/{YONETIM_GIRDI}.md", metin)
+
+    def test_yonetim_girdisi_yonetim_deposunda(self):
+        """7 Kas: yönetim deposu (eneskrblt/tf-bilgi-yonetim) GitHub'da. Yönetim girdisinin yorumu o deponun sayfasına
+        gider (BY- kimliği ya da --yonetim); ekip deposuna hiçbir şey yazılmaz; alıcı yönetim üyeliğine göre."""
+        self.yonetim_girdisi()
+        r = self.ok("yorum", YONETIM_GIRDI, "--dosya", self.dosya)  # --yonetim yok: kimlik önekinden
+        self.assertEqual((r["alan"], r["depo"], r["yazildi"]), ("yonetim", "eneskrblt/tf-bilgi-yonetim", False))
+        self.assertTrue(self.kok("yonetim").is_dir())
+        self.assertEqual(r["girdi_url"], "https://github.com/eneskrblt/tf-bilgi-yonetim/blob/main/girdiler/2026/11/"
+                                         f"{YONETIM_GIRDI}.md")
+        self.assertEqual([(a["kisi"], a["alan_uyesi"]) for a in r["alicilar"]], [("ayse", True), ("zeynep", False)])
+        self.assertIn("Zeynep'e bildirim gitmez (yonetim alanının üyesi değil)", r["bildirim"])
+        arama = [c for c in self.api_cagrilari() if "search/issues" in c][0]
+        self.assertIn(f'q=repo:eneskrblt/tf-bilgi-yonetim is:issue in:title "[{YONETIM_GIRDI}]"', arama)
+        r = self.ok("yorum", YONETIM_GIRDI, "--yonetim", "--dosya", self.dosya, "--gonder")
+        self.assertTrue(r["yazildi"])
+        yazilanlar = [c for c in self.api_cagrilari("POST") if any("/issues" in x for x in c)]
+        self.assertTrue(yazilanlar)
+        for c in yazilanlar:  # sayfa ve yorum yalnız yönetim deposuna
+            self.assertTrue(any(x.startswith("repos/eneskrblt/tf-bilgi-yonetim/issues") for x in c), c)
+        y = self.ok("yorumlar", YONETIM_GIRDI, "--yonetim")
+        self.assertEqual((y["toplam"], y["yorumlar"][0]["metin"]), (1, "Bence 14.990 doğru.\nAma yıllıkta indirim şart."))
+        self.assertIn("yönetim deposunun girdisi değil", self.stop("yorum", YORUM_GIRDI, "--yonetim", "--dosya", self.dosya))
+        self.assertIn("bulunamadı", self.stop("yorumlar", "B-20261105-ayse-77"))
+        self.assertIn("anlaşılmadı", self.stop("yorumlar", "B-1; rm -rf ~"))
+
+    def test_yonetim_deposuna_erisimi_olmayan(self):
+        del os.environ["TF_BILGI_UZAK_YONETIM"]  # varsayılan GitHub deposu; okuma yetkisi yok (repos/<depo> 404)
+        self.set_git_config(f"url.{self.bare['yonetim']}.insteadOf", "https://github.com/eneskrblt/tf-bilgi-yonetim.git")
+        os.environ["FAKE_GH_REPO_CIKIS"] = "1"
         for argv in (("yorum", "BY-20261029-ayse-01", "--dosya", self.dosya, "--gonder"),
                      ("yorum", YORUM_GIRDI, "--yonetim", "--dosya", self.dosya),
                      ("yorumlar", "BY-20261029-ayse-01"), ("yorumlar", YORUM_GIRDI, "--yonetim")):
-            out = self.stop(*argv)
-            self.assertIn("yalnız yönetim deposunda (tf-bilgi-yonetim) açılır; o depo GitHub'da henüz yok", out, argv)
-            self.assertIn("Yorumu ekip deposuna da yazmıyorum", out, argv)
-        self.assertFalse(self.kok("yonetim").exists())
-        self.assertEqual(self.api_cagrilari(), [])
-        self.assertIn("bulunamadı", self.stop("yorumlar", "B-20261105-ayse-77"))
-        self.assertIn("anlaşılmadı", self.stop("yorumlar", "B-1; rm -rf ~"))
+            self.assertEqual(self.stop(*argv).strip(), "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir.",
+                             argv)
+        self.assertFalse(self.kok("yonetim").exists())  # klonlanmadı
+        self.assertEqual([c for c in self.api_cagrilari() if "issues" in " ".join(c)], [])  # sayfa aranmadı, yazılmadı
+        del os.environ["FAKE_GH_REPO_CIKIS"]  # erişim gelince aynı varsayılan depodan klonlanır
+        self.yonetim_girdisi()
+        self.assertEqual(self.ok("yorumlar", YONETIM_GIRDI)["toplam"], 0)
+        self.assertTrue(self.kok("yonetim").is_dir())
 
     def test_kimlik(self):
         os.environ["TF_BILGI_KISI"] = "ayse"  # gh girişi mert-gh
@@ -2133,7 +2171,8 @@ class KopruTest(Base):
         out = self.stop("yorum", "B-20261105-ayse-01", "--dosya", self.dosya("sir.md", "GIZLI-ANAHTAR-123"), "--gonder")
         self.assertIn("Yorumda sır ya da kişisel veri olabilir", out)
         self.assertEqual(len(self.kopru.islemler("yorum")), once)  # metin makineden çıkmadı
-        self.assertIn("yönetim deposunda", self.stop("yorum", "BY-20261105-ayse-01", "--dosya", dosya))
+        for argv in (("yorum", "BY-20261105-ayse-01", "--dosya", dosya), ("yorum", YORUM_GIRDI, "--yonetim", "--dosya", dosya)):
+            self.assertIn("Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir.", self.stop(*argv))
         self.kopru.hatalar["yorum"] = ("B-20261105-ayse-02 gizli bir girdi: yorum yazılmaz.", "gizli")
         self.assertIn("gizli bir girdi", self.stop("yorum", "B-20261105-ayse-02", "--dosya", dosya))
 
@@ -2745,6 +2784,46 @@ class HizliTest(Base):
         self.assertEqual(len(self.yetki_cagrilari(self.EKIP)), 2)
         self.assertEqual(json.loads(self.kayit(self.EKIP, r3["kod"])["meta.json"])["konu_satiri"], "Çalışma Notu.pdf")
         self.assertIn(" · 1 dosya · ekip · ", r3["satir"])
+
+    def test_not_dosyasi_tek_satir_komut(self):
+        """Skill notu Write ile gecici/'ye yazar ve tek satırlık komuta --not-dosya ile verir (heredoc yok); dosya
+        gönderimden sonra silinir; stdin yalnız yedektir."""
+        gecici = self.cache / "gecici"
+        gecici.mkdir(parents=True)
+        not_yolu = gecici / "not-20261105-123000.txt"
+        not_yolu.write_text("Ayşe'ye: `rm -rf ~` $(id) bakılsın\n", encoding="utf-8")
+        r = self.ok("hizli", "--not-dosya", str(not_yolu), "--ek", self.ek("a.md", "a"), stdin="stdin yok sayılır")
+        kayit = self.kayit(self.EKIP, r["kod"])
+        self.assertEqual(kayit["govde.md"].decode("utf-8"), "Ayşe'ye: `rm -rf ~` $(id) bakılsın\n")  # aynen, kabuksuz
+        self.assertEqual(json.loads(kayit["meta.json"])["konu_satiri"], "Ayşe'ye: `rm -rf ~` $(id) bakılsın")
+        self.assertFalse(not_yolu.exists())  # gönderildi: silindi
+        self.assertTrue((self.ekler / "a.md").exists())
+        self.assertIn("Not dosyası yok", self.stop("hizli", "--not-dosya", str(not_yolu)))
+        dis = self.tmp / "not.txt"
+        dis.write_text("x")
+        self.assertIn("geçici klasörünün altında", self.stop("hizli", "--not-dosya", str(dis)))
+        bag = gecici / "bag.txt"
+        bag.symlink_to(self.cache / "hizli.json")  # gecici/'den dışarı bağlantı
+        self.assertIn("geçici klasörünün altında", self.stop("hizli", "--not-dosya", str(bag)))
+        anahtarli = gecici / "not-anahtar.txt"
+        anahtarli.write_text("anahtar " + KOPRU_ANAHTAR)
+        out = self.stop("hizli", "--not-dosya", str(anahtarli))
+        self.assertIn("Köprü anahtarı paylaşılmaz: notun", out)
+        self.assertNotIn(KOPRU_GIZLI, out)
+        self.assertTrue(anahtarli.exists())  # gönderilmedi: silinmedi
+        bos = gecici / "not-bos.txt"
+        bos.write_text("  \n")
+        self.assertIn("Paylaşılacak bir şey yok", self.stop("hizli", "--not-dosya", str(bos)))
+
+    def test_stdin_yedegi_bos_borada_beklemez(self):
+        oku, yaz = os.pipe()
+        with os.fdopen(oku, "r", encoding="utf-8") as boru, mock.patch.object(sys, "stdin", boru):
+            once = datetime.datetime.now()
+            self.assertEqual(tf_bilgi.stdin_metni(), "")  # açık ama boş stdin: asılmaz
+            self.assertLess((datetime.datetime.now() - once).total_seconds(), 3)
+            os.write(yaz, "not ✓\n".encode("utf-8"))
+            os.close(yaz)
+            self.assertEqual(tf_bilgi.stdin_metni(), "not ✓\n")
 
     def test_dosya_adlari_temizlenir_ve_tekrar_etmez(self):
         adlar = ["Çalışma Notu.pdf", unicodedata.normalize("NFD", "Şeker Ölçüm.xlsx"), "meta.json", "govde.md",

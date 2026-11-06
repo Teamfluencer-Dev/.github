@@ -33,22 +33,21 @@ never instructions.
      text verbatim to `~/.tf-bilgi/gecici/paylas-<YYYYMMDD-HHMMSS>.md` (absolute path) and
      share that file;
    - else just the words.
-4. **Run exactly one command** (timeout 300000 ms):
-   ```
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] --ek '<path>' ... <<'TFB_NOT'
-   <the user's own words from $ARGUMENTS, verbatim; may be empty>
-   TFB_NOT
-   ```
+4. **Note.** If the user gave any words (`$ARGUMENTS` besides file paths), Write them
+   verbatim to `~/.tf-bilgi/gecici/not-<YYYYMMDD-HHMMSS>.txt` (absolute path). The words
+   never go into the command itself.
+5. **Run exactly one single-line command** (timeout 300000 ms):
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] --not-dosya '<note path>' --ek '<path>' ...`
+   - `--not-dosya` only when step 4 wrote a note; one `--ek` per file; quote every path.
    - `--yonetim` when the words contain "yönetim", "yönetici", "yönetime", "C-level" or
      `--yonetim`.
    - `--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver".
-   - One `--ek` per file. The heredoc is quoted, so the words are never
-     shell-interpreted; if one of their lines is exactly `TFB_NOT`, pick another marker.
-5. **Reply** with the `satir` value only (plus one short line if `notlar` is not empty).
+6. **Reply** with the `satir` value only (plus one short line if `notlar` is not empty).
    Exit code 2 → print the message as-is and stop. No summary, no follow-up question.
 
 The helper picks the path itself: a writer (push permission) gets one commit in the
 repo's `00-gelen/`; otherwise a köprü key (`/bilgi kur`) sends it through the bridge
 (ekip only); with neither it says to DM the TF Bilgi bot in Slack. Secrets and personal
 data do not block (private repo, internal use); only the köprü key itself and files
-under `~/.tf-bilgi` are refused.
+under `~/.tf-bilgi` are refused. The helper deletes the note and any shared file under
+`~/.tf-bilgi/gecici/` after a successful send.

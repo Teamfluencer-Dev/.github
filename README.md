@@ -275,7 +275,10 @@ Sayfa bulunamadığında ikisinden biri yanıt vermediyse ya da arama eksik dön
 bakar; yine emin değilse ikinci bir sayfa açmamak için durur. GitHub girişi `kisiler.json`'daki
 hesapla çelişirse durur. Gizli girdiye yorum yazılmaz (sayfa her okuyana açık; `/bilgi
 yorumlar` gizli girdide herkese açık sayfa olmadığını söyler); yönetim girdilerinin sayfası
-yalnız yönetim deposunda olur; eklenti şimdilik yönetim girdisine yorumu reddeder. KB'deki
+yalnız yönetim deposunda (`eneskrblt/tf-bilgi-yonetim`) olur: `--yonetim` ya da ekip dışı kimlik
+(`BY-…`) o deponun sayfalarına gider, yalnız o depoyu okuyabilenler için (doğrudan yol);
+diğerlerine ve köprüde "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir."
+denir. Yorum hiçbir zaman öbür alanın deposuna yazılmaz. KB'deki
 `bildirim.yml` yeni yorumda girdinin yazarına, alıcılarına ve önceki yorumculara bildirir
 (kanal, sessiz saat ve pilot aynı; günlük sınır ayrı: kişi başı günde 5 yorum bildirimi, acil
 istek bildirimlerinin hakkını yemez); sessiz saatte yazılan yorum ertesi iş günü 08:30 günlük
@@ -311,8 +314,9 @@ deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kal�
 Önbellek klonunda commit'lenmemiş değişiklik varsa eklenti üzerine çekmez ve durur
 (ne yapılacağını yazar). Klonun `.kb.json` alanı beklenenle tutmazsa da durur.
 
-`/paylas` kullanıcının kendi sözlerini tek komuta tırnaklı heredoc'la (`<<'TFB_NOT'`) verir:
-kabuk yorumlamaz, yardımcı stdin'den okur; belge metni hiçbir zaman komuta girmez.
+`/paylas` kullanıcının kendi sözlerini Write aracıyla `~/.tf-bilgi/gecici/not-<zaman>.txt`'ye
+yazar ve tek satırlık komuta `--not-dosya` ile verir (heredoc yok; stdin yalnız yedek);
+gönderimden sonra yardımcı dosyayı siler. Belge ya da not metni hiçbir zaman komuta girmez.
 Gizli paylaşım ve `/toplu-paylas` belge metnini kabuk komutuna koymaz: eşleştirme metni,
 başlık, commit mesajı ve girdi Write aracıyla `~/.tf-bilgi/gecici/` altındaki o çalıştırmaya
 ait klasöre yazılır ve dosya seçenekleriyle verilir (`--baslik-dosya`, `--mesaj-dosya`,
