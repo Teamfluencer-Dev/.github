@@ -408,6 +408,22 @@ class KbSurumTest(Base):
         self.assertTrue(GERCEK_KB_SHA256)
         for ozet in GERCEK_KB_SHA256:
             self.assertRegex(ozet, r"^[0-9a-f]{64}$")
+        self.assertEqual(len(set(GERCEK_KB_SHA256)), len(GERCEK_KB_SHA256))
+
+    def test_gecis_iki_surumu_de_kabul_eder(self):
+        """0.4.0 geçişi: KB depolarındaki eski kb.py ile gizli paylaşımlı yeni kb.py birlikte sabitli (KB §12)."""
+        self.assertIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)
+        self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
+        self.assertEqual(len(GERCEK_KB_SHA256), 2)
+        eski_stub = STUB_KB + "# eski\n"
+        self.seed_commit("ekip", "araclar/kb.py", eski_stub)
+        iki = (hashlib.sha256(eski_stub.encode()).hexdigest(), STUB_SHA256)
+        with mock.patch.object(tf_bilgi, "KB_SHA256", iki):
+            self.assertEqual(self.ok("hazirla")["alan"], "ekip")  # eski hash geçer
+            self.seed_commit("ekip", "araclar/kb.py", STUB_KB)
+            self.assertEqual(self.ok("hazirla")["alan"], "ekip")  # yeni hash geçer
+            self.seed_commit("ekip", "araclar/kb.py", STUB_KB + "# başka\n")
+            self.assertIn("eklentinin onayladığı sürüm değil", self.stop("hazirla"))
 
 
 class KisiTest(Base):
@@ -736,6 +752,73 @@ class KaydetTest(Base):
         self.assertEqual(git(self.bare["ekip"], "log", "-1", "--format=%s", "main"),
                          "B-20261105-ayse-01: Başlık 'tırnak' $(touch PWNED)")
         self.assertFalse((self.kok() / "PWNED").exists())
+
+    def gizli_yaz(self):
+        metin = girdi_metni().replace("tarih: 2026-11-05\n---", "gizli: true\nham: null\ntarih: 2026-11-05\n---")
+        return self.ok("yaz", stdin=metin)["yol"]
+
+    def ham_ve_defter(self, girdi="B-20261105-ayse-01", ad="gizli"):
+        ham = f"ham/2026/11/3f9a2c1e-{ad}.txt"
+        (self.kok() / ham).parent.mkdir(parents=True, exist_ok=True)
+        (self.kok() / ham).write_text("gizli içerik\n")
+        with open(self.kok() / tf_bilgi.DEFTER, "a") as defter:
+            defter.write("3f9a2c1e" + ad.encode().hex()[:8].ljust(56, "0") + f"\t{ham}\t{girdi}\t2026-11-05\n")
+        return ham
+
+    def test_gizli_girdiye_yalniz_defter_satiri_de_eklenmez(self):
+        entry = self.gizli_yaz()
+        self.ham_ve_defter()
+        out = self.stop("kaydet", "--mesaj", "m", entry, tf_bilgi.DEFTER)  # ham dosyası yok, yalnız defter satırı
+        self.assertIn("gizli girdiye (B-20261105-ayse-01) ham dosya satırı eklenemez", out)
+        self.assertFalse(self.published(entry))
+
+    def test_gizli_girdiye_sonradan_ham_eklenmez(self):
+        entry = self.gizli_yaz()
+        self.assertTrue(self.ok("kaydet", "--mesaj", "m", entry)["gonderildi"])
+        ham = self.ham_ve_defter()
+        out = self.stop("kaydet", "--mesaj", "m", ham, tf_bilgi.DEFTER)  # ikinci çağrı: girdi artık yayımlanmış
+        self.assertIn("gizli girdiye (B-20261105-ayse-01) ham dosya satırı eklenemez", out)
+        out = self.stop("kaydet", "--mesaj", "m", ham)  # defter verilmese de yerel defterdeki satır bağlar
+        self.assertIn("defterde gizli bir girdiye bağlı", out)
+        self.assertFalse(self.published(ham))
+        (self.kok() / entry).unlink()  # yalnız origin/main'de: yine gizli sayılır
+        self.assertTrue(tf_bilgi.gizli_kimlik_mi(self.kok(), "B-20261105-ayse-01"))
+        git(self.kok(), "checkout", "--", entry)
+        self.assertFalse(tf_bilgi.gizli_kimlik_mi(self.kok(), "B-20261029-ayse-01"))  # gizli olmayan yayımlanmış girdi
+        self.assertFalse(tf_bilgi.gizli_kimlik_mi(self.kok(), "-"))
+
+    def test_gizli_olmayan_girdinin_ham_dosyasi_gecer(self):
+        entry = self.ok("yaz", stdin=girdi_metni("B-20261105-ayse-02"))["yol"]
+        ham = self.ham_ve_defter("B-20261105-ayse-02", "acik")
+        self.assertTrue(self.ok("kaydet", "--mesaj", "m", entry, ham, tf_bilgi.DEFTER)["gonderildi"])
+
+    def test_gizli_girdi_mi_kenarlari(self):
+        fm = lambda *satir: "---\nid: B-20261105-ayse-01\n" + "".join(s + "\n" for s in satir) + "---\ngövde\n"  # noqa: E731
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("gizli: true")))
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("gizli: True # yorum")))
+        self.assertTrue(tf_bilgi.gizli_girdi_mi("\ufeff" + fm("gizli: true")))  # BOM'lu dosya
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("istek:", "  gizli: true")))  # iç içe anahtar: güvenli tarafta kalır
+        self.assertFalse(tf_bilgi.gizli_girdi_mi(fm("gizli: false")))
+        self.assertFalse(tf_bilgi.gizli_girdi_mi(fm('gizli: "true"')))  # tırnaklı değer: kb.py dogrula zaten HATA verir
+        self.assertFalse(tf_bilgi.gizli_girdi_mi("gizli: true\n"))  # frontmatter yok
+
+    def test_gizli_girdiyle_ham_kaydedilmez(self):
+        metin = girdi_metni().replace("tarih: 2026-11-05\n---", "gizli: true\nham: null\ntarih: 2026-11-05\n---")
+        entry = self.ok("yaz", stdin=metin)["yol"]
+        ham = "ham/2026/11/3f9a2c1e-gizli.txt"
+        (self.kok() / ham).parent.mkdir(parents=True)
+        (self.kok() / ham).write_text("gizli içerik\n")
+        with open(self.kok() / tf_bilgi.DEFTER, "a") as defter:
+            defter.write("3f9a2c1e" + "0" * 56 + f"\t{ham}\tB-20261105-ayse-01\t2026-11-05\n")
+        out = self.stop("kaydet", "--mesaj", "m", entry, ham, tf_bilgi.DEFTER)
+        self.assertIn("gizli girdiyle (B-20261105-ayse-01) ham/ dosyası kaydedilmez", out)
+        self.assertFalse(self.published(ham))
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(metin))
+        self.assertFalse(tf_bilgi.gizli_girdi_mi(girdi_metni()))
+        self.assertFalse(tf_bilgi.gizli_girdi_mi("---\nid: x\n---\ngizli: true\n"))  # gövdede sayılmaz
+        (self.kok() / ham).unlink()
+        git(self.kok(), "checkout", "--", tf_bilgi.DEFTER)
+        self.assertTrue(self.ok("kaydet", "--mesaj", "m", entry)["gonderildi"])  # yalnız girdi geçer
 
     def test_commits_and_pushes_new_entry_raw_file_and_ledger(self):
         entry = self.ok("yaz", stdin=girdi_metni())["yol"]
@@ -1178,6 +1261,46 @@ class BildirimPlaniTest(Base):
         self.assertIn("kimse", self.stop("bildirim-plani", "--tip", "BILGI", "--kimden", "kimse", "--yazar", "ayse"))
 
 
+class GizliAlicilarTest(Base):
+    """Gizli paylaşım: Drive'da paylaşılacak iş e-postaları kisiler.json'dan; adres yoksa tahmin edilmez."""
+
+    def setUp(self):
+        super().setUp()
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"]["zeynep"] = {"ad": "Zeynep Örnek", "alanlar": ["ekip"], "eposta": None, "github": None}
+        for alan in ("ekip", "yonetim"):
+            self.seed_commit(alan, "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        self.ok("hazirla")
+        self.ok("hazirla", "--yonetim")
+
+    def test_epostalar_ve_eksik(self):
+        r = self.ok("gizli-alicilar", "--kimden", "mert,zeynep,mert")
+        self.assertEqual([(a["kisi"], a["eposta"], a["alan_uyesi"]) for a in r["alicilar"]],
+                         [("mert", "mert@ornek.test", True), ("zeynep", None, True)])
+        self.assertEqual(r["satir"], "Mert: mert@ornek.test · Zeynep: e-postası kayıtlı değil (kisiler.json)")
+        self.assertEqual(r["eksik_eposta"], ["Zeynep"])
+        self.assertIn("tahmin edilmez", r["notlar"][0])
+
+    def test_yonetim_alani_ve_bilinmeyen(self):
+        r = self.ok("gizli-alicilar", "--yonetim", "--kimden", "ayse,mert")
+        self.assertEqual([a["alan_uyesi"] for a in r["alicilar"]], [True, False])
+        self.assertIn("Mert yonetim alanının üyesi değil", r["notlar"][0])
+        self.assertIn("kimse", self.stop("gizli-alicilar", "--kimden", "ayse,kimse"))
+        self.assertIn("(boş)", self.stop("gizli-alicilar", "--kimden", ","))
+        self.assertFalse([c for c in self.gh_calls() if c[:2] == ["issue", "comment"]])  # yorum yazmaz
+        self.assertEqual(git(self.kok(), "status", "--porcelain"), "")  # klona yazmaz
+
+    def test_kisi_degeri_null_ve_hazirla_once(self):
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"]["bos"] = None
+        self.seed_commit("ekip", "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        self.ok("hazirla")
+        self.assertIn("kisiler.json'da yok: bos", self.stop("gizli-alicilar", "--kimden", "bos"))  # null kişi değil
+        self.assertEqual(self.ok("gizli-alicilar", "--kimden", "ayse")["alicilar"][0]["eposta"], "ayse@ornek.test")
+        shutil.rmtree(self.kok())
+        self.assertIn("önce `tf_bilgi.py hazirla", self.stop("gizli-alicilar", "--kimden", "ayse"))
+
+
 class CliTest(Base):
     def test_hazirla_prints_json(self):
         code, out, _ = self.cli("hazirla")
@@ -1200,6 +1323,7 @@ class CliTest(Base):
         self.assertEqual(code, 64)
         self.assertIn("kullanım", err)
         self.assertIn("temizle", err)
+        self.assertIn("gizli-alicilar", err)
 
 
 if __name__ == "__main__":

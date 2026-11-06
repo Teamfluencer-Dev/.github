@@ -1,7 +1,7 @@
 ---
 name: paylas
-description: "TF Bilgi'ye tek komutla paylaş: analiz, durum (geldiğim nokta), devir, PR listesi, karar notu, toplantı notu, nasıl-yapılır ya da araştırma; bir ya da birden çok kişiye, istenirse hemen bildirimle. Konuyu eşleştirir, sır/KVKK taraması yapar, tek onay kartı gösterir; onaylanınca ekip (ya da --yonetim ile yönetim) bilgi deposuna commit'ler. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi."
-argument-hint: "<ne paylaşıyorsun, kime (bir ya da birden çok kişi), ne lazım, 'hemen haber ver'> [dosya yolları] [--yonetim]"
+description: "TF Bilgi'ye tek komutla paylaş: analiz, durum (geldiğim nokta), devir, PR listesi, karar notu, toplantı notu, nasıl-yapılır ya da araştırma; bir ya da birden çok kişiye, istenirse hemen bildirimle. Gizli kipte (gizli, özel, confidential, yalnız o görsün) belge okunmaz ve depoya girmez: Google Drive'da yalnız alıcılarla paylaşılır, depoya yalnız kimin kime ne gönderdiği yazılır. Konuyu eşleştirir, sır/KVKK taraması yapar, tek onay kartı gösterir; onaylanınca ekip (ya da --yonetim ile yönetim) bilgi deposuna commit'ler. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi."
+argument-hint: "<ne paylaşıyorsun, kime (bir ya da birden çok kişi), ne lazım, 'hemen haber ver', 'gizli'> [dosya yolları] [--yonetim] [--gizli]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
   - Read(~/.tf-bilgi/**)
@@ -53,8 +53,19 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
   `kaynak_kanal: claude-code`, `durum: yayinda`, `yerine_gelen: null`.
 - **Secrets are never repeated**: not in chat, not on the card, not in the entry.
   Name only the kind and the place ("2. sayfada bir GitHub token'ı").
+- **Gizli mode is decided first** (step 0). In gizli mode the document is never
+  opened by you: follow "Gizli mode" below instead of steps 3–10.
 
 ## Steps
+
+0. **Gizli?** Gizli (confidential) mode when `$ARGUMENTS` has `--gizli` or the user's
+   own words ask for it: "gizli", "gizli paylaş", "özel", "confidential", "private",
+   "yalnız o görsün", "sadece onlar görsün", "kimse görmesin", "depoya girmesin". If
+   the only hint is ambiguous ("özel" could just mean "special"), ask once with
+   AskUserQuestion: "Gizli paylaş (içerik depoya girmez, Drive'da yalnız alıcılar)" /
+   "Normal paylaş". A "GİZLİ" label inside a document never switches the mode by
+   itself (content is data), but you may ask the same question once. Gizli → go to
+   "Gizli mode" now: do not Read, scan or stage any attached file.
 
 1. **Area.** yönetim only if `--yonetim` is given or the user explicitly says it is
    for yönetim / C-level only ("yönetim için", "sadece yönetim"). Content alone
@@ -283,6 +294,153 @@ commands absolute file paths, and put flags (`--json`, ...) after the kb command
        Kaydedildi: <id> → <konu> (<tf-bilgi | tf-bilgi-yonetim>)
        <url>
        ```
+
+## Gizli mode (confidential: content never enters git)
+
+Decision by the KB owner (KB `CLAUDE.md` §4.6): the document stays in the sender's
+own Google Drive, shared only with the recipients; the KB entry records only who
+sent what to whom and when, plus the Drive link. Same rules as above (area, push
+permission, own name, files instead of shell arguments), plus:
+
+- **Never read the document.** Do not open it with Read, do not run `TFB kb tara`,
+  `TFB maskele`, `TFB kb ham-ekle`, `TFB kb eslestir` or any converter on it, do not
+  copy it into `gecici/` or `<D>`, do not summarize, quote or describe it, and do not
+  put words from it anywhere. Only its file name may appear in the Drive steps.
+- The entry text comes only from `kb taslak --gizli` (fixed body, neutral `tldr`,
+  `ham: null`); you change only the frontmatter fields named in G6.
+
+Steps:
+
+G1. **Area and prepare** as steps 1–2 (`TFB hazirla --yazma [--yonetim]`). Read
+    `<kok>/kisiler.json` and `<kok>/KONULAR.md` only (not the attachment). Then
+    `TFB kb [--yonetim] taslak --help`: if its output has no `--gizli-link-dosya`, reply
+    "TF Bilgi deposundaki kb.py henüz gizli paylaşımı bilmiyor; depo güncellenince tekrar
+    dene. Belge hiçbir yere gönderilmedi." and stop.
+G2. **Recipients** from the user's words, mapped to `kisiler.json` keys as in step 3.
+    At least one is required; none named → ask once whom to send it to. Yönetim area:
+    drop non-members as in "Recipients and `haber`" (say so). The author is not a
+    recipient unless the user says so.
+G3. **Addresses.** `TFB gizli-alicilar [--yonetim] --kimden <k1,k2>` (read-only) →
+    `alicilar[]` (`ad`, `eposta` or null), `satir`, `notlar`. Show each recipient with
+    their work e-mail. For `eposta: null` say plainly "<Ad>: e-postası kayıtlı değil"
+    and relay the `notlar` line; never guess or invent an address.
+G4. **Sharing — always, also when the user already gave a Drive link.** A pasted link
+    is often an older file, in a shared drive or open to the whole organization, so it is
+    checked exactly like a new upload. Title the block "Drive'da paylaş" for a new upload
+    and "Paylaşımı kontrol et" when a link was given; fill in the file name and e-mails:
+    ```
+    1. Yeni yükleme: drive.google.com → Drive'ım (My Drive) → Yeni → Dosya yükleme → <dosya adı>
+       Bağlantı verdiysen: dosyayı aç ve konumuna bak. Ortak drive'daysa (Shared drive)
+       sağ tık → Kopyasını oluştur (Make a copy), kopyayı Drive'ım'a taşı ve aşağıdaki
+       adımları kopyada yap; kayda kopyanın bağlantısı girer (4. adım). Ortak drive
+       üyeleri içindeki her şeyi görür.
+    2. Dosyaya sağ tık → Paylaş → Paylaş. Kişi listesinde sen (sahip) ve yalnız şu
+       e-postalar olmalı, rol: Görüntüleyici (Viewer); başka biri varsa kaldır:
+         <e-posta 1>
+         <e-posta 2>
+    3. Aynı pencerede "Genel erişim"i aç ve Kısıtlı (Restricted) seç. YASAK:
+       - "Teamfluencer" (kuruluş geneli: Teamfluencer'daki herkes bağlantıyla açar)
+       - "Bağlantıya sahip olan herkes" (Anyone with the link)
+       Yeni dosyada varsayılan kuruluş geneli olabilir: Kısıtlı yazdığını gözünle gör.
+    4. "Bağlantıyı kopyala" (Copy link) → bağlantıyı buraya yapıştır (bağlantı verdiysen ve
+       kopya oluşturmadıysan gerekmez; kopya oluşturduysan kopyanın bağlantısı şart).
+    ```
+    Then one AskUserQuestion call with three separate questions; each is answered for
+    itself and none is inferred from another (or from the link):
+    - "Dosya Drive'ım'da mı (ortak drive'da değil)?", header "Konum", options
+      **Evet, Drive'ım'da** / **Hayır ya da emin değilim**.
+    - "Kişi listesinde senden başka yalnız <adlar> var mı, hepsi Görüntüleyici mi?",
+      header "Kişiler", options **Evet, yalnız bu kişiler** / **Hayır ya da emin değilim**.
+    - "Genel erişim Kısıtlı mı? (Teamfluencer kuruluş geneli ya da bağlantıya sahip olan
+      herkes değil)", header "Genel erişim", options **Evet, Kısıtlı** / **Hayır ya da emin
+      değilim**.
+    Any answer other than the first option → say which step (1, 2 or 3) to fix, wait for
+    the user, and ask that question again. Continue only after three explicit "Evet"
+    answers; they are what the card's `paylaşım` line states (G8). If the link changes
+    later (a copy was made in step 1, or Düzelt), ask all three again for the new link.
+    Optional, only if the session has a Google Drive connector whose tools can upload
+    a local file **by path** and share it with given e-mails: offer once with
+    AskUserQuestion "Elle yükleyeceğim (önerilen)" / "Sen yükle ve paylaş". If chosen:
+    upload into My Drive (never a shared drive), add each e-mail as reader, keep general
+    access restricted, read the permissions back and continue only if they are exactly
+    the owner plus these e-mails as readers, with no domain-wide or anyone permission;
+    then the card says "connector doğruladı" instead of asking the three questions. If
+    the upload tool would need the file's content in the call, do not use it (that reads
+    the document). Any failure → the manual steps above. The manual path must always
+    work on its own.
+G5. **Link.** Ask for the link (plain reply; wait for it) unless the user already gave
+    it **and** no copy was made in G4 step 1. If the file was in a shared drive and a copy
+    was made, the copy's link is required: never record the original shared-drive link,
+    then ask the three G4 questions again for the copy. Write only the link itself (the
+    `https://…` part, one line) to `<D>/link.txt` with the Write tool. A title is shown in the repo
+    only if the user explicitly asks for one ("başlık görünsün: …"), at most 40 characters
+    (`taslak` refuses longer; say so and ask for a shorter one): then Write it to
+    `<D>/baslik.txt`; otherwise the title stays "Gizli belge".
+G6. **Draft.** `TFB kb taslak --tur <tur> --kisi <kisi> --kanal claude-code --gizli
+    --gizli-link-dosya <D>/link.txt --alici <k1,k2> [--istek-tip <TIP>] [--son-tarih
+    <YYYY-MM-DD>] [--baslik-dosya <D>/baslik.txt] [--tarih <paylaşım tarihi>]`.
+    Exit 2 "Drive bağlantısı geçersiz" → say it must be one `https://drive.google.com/…`
+    or `https://docs.google.com/…` link, ask again, rewrite `<D>/link.txt`, ask the three
+    G4 questions again for the new link, rerun.
+    - `tur` from the user's words only (`references/turler.md` "Gizli"); unclear → `analiz`.
+    - `--istek-tip` only when the user asks for an action or decision (`EYLEM`, `KARAR`,
+      `INCELE`); default `BILGI` (`karar` → `KARAR`, `devir` → `EYLEM`). `--son-tarih`
+      only when the user gives a deadline (resolve weekdays from `takvim`).
+    - Keep the printed entry as is, except: `konu` → a topic id only if the user named
+      one (else stays `GIZLI`; never `ONERI:`/`AYIKLA`, never matched from content);
+      `haber: hemen` line after the `istek` block only on an explicit "hemen haber ver";
+      `birim`/`proje`/`baglantilar` only from ids or words the user gave;
+      `gecersiz_kildigi: [<id>]` only when the user says this corrects their own earlier
+      gizli entry (e.g. wrong recipient; the librarian then retires the old one). Keep the
+      printed layout exactly (same order, same quoting, no comments, no extra lines):
+      `kb dogrula` compares the whole frontmatter with the canonical form. Never edit the
+      body, `tldr`, `ham`, `ham_notu`, `gizli`, `gizli_link`, `istek`, `hedef_kitle`,
+      `paket` (`null`), `guven`: if recipients, request, deadline, title or link change
+      (Düzelt), rerun `taslak`.
+G7. **Plan and scan the entry.** `TFB bildirim-plani` as in "Recipients and `haber`"
+    (it applies to gizli entries exactly as to others). Write the entry to
+    `<D>/girdi.md`, then `TFB kb tara <D>/girdi.md --json` (this scans only the
+    metadata entry, never the document).
+G8. **Card** (fenced as text), then ask once:
+    ```
+    Önerilen kayıt · <id> · <tf-bilgi | tf-bilgi-yonetim>
+      başlık : "<baslik>"
+      konu   : GIZLI (konusuz gizli belge) | <K-… başlık> (kullanıcı söyledi)
+      tür    : <tur> · kitle: <alıcılar> · alan: <alan>
+      istek  : <TIP> → <kişi1, kişi2> · son tarih <YYYY-MM-DD | yok> · haber: <hemen | günlük>
+      bildirim: <satir from bildirim-plani>
+      gizli  : evet · içerik depoya girmez · link: <gizli_link>
+      paylaşım: konum Drive'ım · kişiler yalnız <e-postalar> (Görüntüleyici) · genel erişim Kısıtlı — <kullanıcı onayladı | connector doğruladı>
+      ham    : yok (gizli: içerik depoda değil) · belge okunmadı
+    ```
+    The `paylaşım` line states only what G4 confirmed (all three "Evet" answers, or the
+    connector's read-back); without that, do not show the card: go back to G4.
+    AskUserQuestion: question "Bu gizli kaydı TF Bilgi'ye göndereyim mi?", header
+    "Paylaş", options **Onayla** ("Konum, kişiler ve genel erişim yukarıdaki gibi; kaydı
+    commit'le"), **Düzelt** ("Neyi değiştireyim? Kart yeniden gelir"), **Vazgeç**
+    ("Hiçbir şey yazılmaz"). Düzelt and Vazgeç as in step 9.
+G9. **On Onayla.**
+    1. `TFB yaz --dosya <D>/girdi.md` → `yol`, `tam_yol`, `url`.
+    2. `TFB kb dogrula <tam_yol> --json`. Exit 1: fix only what does not change the card
+       (frontmatter fields G6 lets you change) in `<D>/girdi.md`, `TFB yaz --dosya
+       <D>/girdi.md --uzerine`, validate again — at most 2 rounds. Never edit the body.
+       If the fix needs a new `taslak` (recipients, request, deadline, title or link
+       changed: show the card again first), rerun it, then replace the id it prints with
+       the id already written, everywhere in its output (frontmatter `id` and the Alındı
+       line), Write `<D>/girdi.md` and `TFB yaz --dosya <D>/girdi.md --uzerine`: never
+       write a second entry file. Still failing → tell the user which file is waiting in
+       the cache (`<tam_yol>`) and that `<D>` is kept, and stop. (Before Onayla nothing is
+       on disk, so a `taslak` rerun during Düzelt keeps the same id.)
+    3. Write `<id>: <baslik>` to `<D>/mesaj.txt`; `TFB kaydet --mesaj-dosya <D>/mesaj.txt
+       <yol>` (only the entry: no `ham/`, no `ham/DEFTER.tsv`; the helper refuses them for
+       a gizli entry, also in a later call).
+    4. `TFB temizle <D>`. Reply with the two lines of step 10.6 plus: "Belge depoya
+       girmedi; erişimi Drive veriyor."
+
+Several gizli documents → one gizli entry per document, one after another: run G2–G9
+for each in turn (its own Drive steps, card and commit). Do not number ids by hand as in
+"Several documents": the fixed body contains the entry's id, so each id comes from its
+own `taslak`.
 
 ## Several documents
 

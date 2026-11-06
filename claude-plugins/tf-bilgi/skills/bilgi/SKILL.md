@@ -1,6 +1,6 @@
 ---
 name: bilgi
-description: "TF Bilgi'den oku: okuma kuyruğun (senden beklenenler, sana yeni olanlar), son girdiler, bir konunun güncel durumu, arama, devir/karar için 'alındı' onayı ve bildirim kanalı tercihin (Slack, mail, WhatsApp). Use when the user runs /bilgi, or asks what is new in TF Bilgi, what is waiting for them, what TF Bilgi says about a topic, or how TF Bilgi should notify them."
+description: "TF Bilgi'den oku: okuma kuyruğun (senden beklenenler, sana yeni olanlar), son girdiler, bir konunun güncel durumu, arama, devir/karar için 'alındı' onayı ve bildirim kanalı tercihin (Slack, mail, WhatsApp). Gizli girdiler 🔒 ve Drive bağlantısıyla gösterilir, özetlenmez. Use when the user runs /bilgi, or asks what is new in TF Bilgi, what is waiting for them, what TF Bilgi says about a topic, or how TF Bilgi should notify them."
 argument-hint: "[son [gün] | kuyrugum | konu <ID> | ara <sorgu> | alindi <girdi-id> [--kisi <alıcı>] [not] | tercih [slack,mail,whatsapp] [kişi]] [--yonetim]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
@@ -63,7 +63,7 @@ is enough).
    `<not>`: first keep only letters (Turkish included), digits, spaces and `.,:-#`, then
    put it in single quotes.
 
-4. **Render** in Turkish, short, no emoji. One line per entry:
+4. **Render** in Turkish, short, no emoji (the one exception is the `🔒 gizli` marker below). One line per entry:
 
    `- [<id>](<baglanti_koku><yol>) · <tur> · <yazar> · <tldr> · ~<okuma_suresi_dk> dk`
 
@@ -72,6 +72,11 @@ is enough).
    only some recipients acknowledged (`istek.alindilar` has dates for some), ` · alındı
    <n>/<toplam>`. `durum: gecersiz` → strike the id
    (`~~id~~`) and add "(geçersiz)".
+
+   Gizli entries (`gizli: true`; the content is not in the repo, only in Google Drive):
+   put `🔒 gizli · Drive: <gizli_link>` where `<tldr>` would go and never show a
+   `tldr` or any summary for them. Show the link as is: Drive itself lets only the
+   recipients open it. Never open, fetch or summarize a gizli link.
 
    - **kuyrugum** — sections in this order, empty ones left out, at most 5 lines
      each plus "+N daha": "Senden beklenen — 48 saat içinde" (`acil`), "Senden

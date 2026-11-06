@@ -134,6 +134,7 @@ söyler; okuma (`/bilgi`) ve bildirim tercihi (`/bilgi tercih`) çalışır. Ekl
 /paylas geldiğim nokta: ödeme ekranı bitti, test bekliyor
 /paylas api#1976 web#689 merge sırası devri
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
+/paylas gizli: Ayşe'ye, yalnız o görsün ./teklif.pdf   # belge okunmaz, Drive'da paylaşılır
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
@@ -166,6 +167,29 @@ kime özette, hangi kanaldan gideceğini ve kime hiçbir şey gitmeyeceğini ad�
 (`tf_bilgi.py bildirim-plani`, yalnız okur). Kanal tercihi (Slack, mail, WhatsApp; bir ya
 da birden çok) KB ekip deposundaki "Bildirim tercihleri" issue'sunda `tercih: kanal=…`
 yorumuyla durur; `/bilgi tercih` okur ve yazar.
+
+**Gizli paylaşım** ("gizli", "özel", "confidential", "yalnız o görsün" ya da
+`--gizli`): belgenin içeriği hiçbir depoya girmez. Eklenti belgeyi açmaz, taramaz,
+dönüştürmez, özetlemez ve geçici klasöre kopyalamaz. Alıcıların iş e-postalarını
+gösterir (`tf_bilgi.py gizli-alicilar`, KB `kisiler.json`'dan; kayıtlı değilse
+söyler, tahmin etmez) ve Drive adımlarını verir: dosyayı kendi Drive'ına (ortak
+drive'a değil: ortak drive üyeleri her şeyi görür) yükle, Paylaş → yalnız bu
+e-postalar Görüntüleyici, "Genel erişim" Kısıtlı ("Teamfluencer" kuruluş geneli ya da
+"Bağlantıya sahip olan herkes" değil), bağlantıyı yapıştır. Hazır bir bağlantı verilse
+de aynı adımlar "Paylaşımı kontrol et" diye gösterilir ve konum, kişiler, genel erişim
+üç ayrı soruyla onaylatılır; kartın `paylaşım` satırı yalnız onaylananı yazar. Bağlantı
+yalnız `https://drive.google.com/…` ya da `https://docs.google.com/…` olabilir
+(`kb.py taslak --gizli` denetler); eklentinin `kaydet`'i gizli girdiye ham dosya ya da
+defter satırı bağlanmasını ayrı çağrılarda da reddeder. Depoya yalnız sabit metinli bir girdi yazılır:
+kim → kime, Drive bağlantısı, nasıl alındı denir (`gizli: true`, `ham: null`; başlık
+istenmedikçe "Gizli belge", en çok 40 karakter). Ortak drive'daki dosya için kopya
+oluşturulursa kayda kopyanın bağlantısı girer ve üç soru o bağlantı için yeniden sorulur. Kartta `gizli: evet · içerik depoya girmez · link: …`
+satırı çıkar. Oturumda dosyayı yoldan yükleyip paylaşabilen bir Google Drive
+connector'ı varsa eklenti bunu önerebilir; elle yol her zaman tek başına çalışır.
+Bildirim kuralları (hemen, kanal, sessiz saat, pilot) aynıdır; mesaj "<Gönderen> sana
+gizli bir belge gönderdi" + Drive bağlantısı. `/bilgi` gizli girdiyi 🔒 ve bağlantıyla
+gösterir, özet göstermez; erişimi Drive verir. `/toplu-paylas`'ta gizli kip yoktur.
+Kurallar: KB `CLAUDE.md` §4.6.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce
@@ -202,9 +226,22 @@ söylenir ve istenirse silinir.
 **KB aracı sabitli.** Eklenti, KB deposundaki `araclar/kb.py`'nin yalnız onayladığı
 sürümünü çalıştırır: sha256'sı `scripts/tf_bilgi.py` içindeki `KB_SHA256`'da durur ve bu
 repoda review'dan geçer. Klondaki `kb.py` farklıysa eklenti hiçbir komutu çalıştırmaz ve
-eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) çalışır. KB
-deposunda `kb.py` değişecekse önce bu repoda yeni hash'i ekleyen PR açılır (sürüm artar,
-`/pr-review`), sonra `kb.py` iki KB deposuna gelir (KB `CLAUDE.md` §12).
+eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) çalışır.
+`kb.py` değişikliği şöyle yayınlanır (KB `CLAUDE.md` §12):
+
+1. Değişiklik KB deposunda bir dalda PR olarak açılır; `main`'e doğrudan push yapılmaz.
+2. Bu repoda yeni hash'i ekleyen PR (sürüm artar, `/pr-review`) o KB PR'ının bağlantısını
+   ve head SHA'sını taşır. Hash o SHA'daki `kb.py`'nindir.
+3. İki PR aynı gün merge edilir: KB PR'ı eklenti merge'ünün hemen ardından. O andan sonra
+   güncellenmemiş eklenti kapalı kalır: durur ve güncellemeyi söyler.
+4. Yeni özellik iki taraf da canlı olunca duyurulur; "eklentiyi güncelleyin" mesajı ondan
+   söz etmez.
+
+Geçişte `KB_SHA256` iki hash taşır (0.4.0: GitHub'daki KB deposunun bugünkü `kb.py`'si ve
+gizli paylaşımlı yeni `kb.py`, Teamfluencer-Dev/tf-bilgi#2 head `76fd0e7`); eski hash bir
+sonraki sürümde çıkar. Yönetim deposu (`tf-bilgi-yonetim`) GitHub'da henüz yok: 0.3.1
+kullanan kimse ona erişemedi. Depo açıldığında ilk push'u aynı yeni `kb.py` ile yapılır;
+o güne kadar `--yonetim` ile paylaşım çalışmaz.
 
 ### Notlar
 
