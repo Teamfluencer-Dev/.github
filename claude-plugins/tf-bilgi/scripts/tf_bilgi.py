@@ -2477,6 +2477,7 @@ def gonder(argv):
             dosyalar.append((ad, yol, gorunen))
             kullanilan.add(ad)
     onbellek = onbellek_koku().resolve()
+    gecici_kok = gecici_dizin().resolve()
     for ek in args.ek:
         yol = Path(ek).expanduser()
         if not yol.is_absolute():
@@ -2484,9 +2485,12 @@ def gonder(argv):
         if not yol.is_file():
             raise Stop(f"Ek bulunamadı: {ek}")
         gercek = yol.resolve()
-        if gercek == onbellek or onbellek in gercek.parents:
+        # ~/.tf-bilgi'de köprü anahtarı, depo klonları ve köprü aynası durur: paylaşılmaz. Tek istisna gecici/: orada
+        # bu çalıştırmanın hazırlık kopyaları durur (/toplu-paylas'ın kaynak.<uz> dosyaları); anahtar oraya
+        # kopyalanırsa aşağıdaki içerik taraması (anahtar_icerir) yakalar.
+        if (gercek == onbellek or onbellek in gercek.parents) and gecici_kok not in gercek.parents:
             raise Stop(f"{yol.name}: TF Bilgi'nin kendi klasöründeki ({onbellek}) dosyalar paylaşılmaz (köprü anahtarı, "
-                       "önbellek ve geçici kopyalar orada durur). Hiçbir şey gönderilmedi.")
+                       "depo klonları ve köprü aynası orada durur). Hiçbir şey gönderilmedi.")
         dosyalar.append((kopru_dosya_adi(yol.name, kullanilan), gercek, yol.name))
     if len(dosyalar) > sinir["dosya_azami_sayi"]:
         raise Stop(f"Bir paylaşımda en çok {sinir['dosya_azami_sayi']} dosya gider ({len(dosyalar)} verildi); "

@@ -2204,6 +2204,35 @@ class KopruTest(Base):
         self.assertIn("Köprü anahtarı paylaşılmaz", self.stop("gonder", "--taslak", notlu, "--metin", metin))
         self.assertEqual(self.kopru.islemler("baslat"), [])
 
+    def test_toplu_paylas_hazirligindaki_ek_gider_anahtar_gitmez(self):
+        """/toplu-paylas köprü yolu: ham dosya gecici/toplu-<damga>/<klasor>/kaynak.<uz>'dadır (~/.tf-bilgi altı); klasör
+        kuralı gecici/'yi muaf tutar. Oraya kopyalanmış anahtar içerik taramasıyla, gecici/'den anahtara giden bağlantı
+        gerçek yoluyla yakalanır (inceleme 2: .github#12)."""
+        self.hazir()
+        metin = self.dosya("taslak.md", "**Sonuç:** x")
+        oge = self.cache / "gecici" / "toplu-20261107-100000" / "001-rapor"
+        oge.mkdir(parents=True)
+        kaynak = oge / "kaynak.html"
+        kaynak.write_text("<h1>Rapor</h1><p>Abonelik ×3 özeti.</p>", encoding="utf-8")
+        sonuc = self.ok("gonder", "--taslak", self.taslak(), "--metin", metin, "--ek", str(kaynak))
+        self.assertEqual([d["ad"] for d in sonuc["dosyalar"]], ["taslak.md", "kaynak.html"])
+        self.assertEqual([d["ad"] for d in self.kopru.islemler("baslat")[-1]["dosyalar"]], ["taslak.md", "kaynak.html"])
+        baslat_sayisi = len(self.kopru.islemler("baslat"))
+        kopya = oge / "kopya.md"
+        kopya.write_text("kurulum notu " + KOPRU_ANAHTAR, encoding="utf-8")
+        out = self.stop("gonder", "--taslak", self.taslak(), "--metin", metin, "--ek", str(kopya))
+        self.assertIn("Köprü anahtarı paylaşılmaz", out)
+        self.assertNotIn(KOPRU_GIZLI, out)
+        bag = oge / "anahtar-baglantisi.txt"
+        bag.symlink_to(self.cache / "anahtar")
+        out = self.stop("gonder", "--taslak", self.taslak(), "--metin", metin, "--ek", str(bag))
+        self.assertTrue("kendi klasöründeki" in out or "Köprü anahtarı paylaşılmaz" in out, out)
+        self.assertNotIn(KOPRU_GIZLI, out)
+        for yasak in (self.cache / "kopru" / "KONULAR.md", self.cache / "anahtar"):
+            self.assertIn("kendi klasöründeki", self.stop("gonder", "--taslak", self.taslak(), "--metin", metin,
+                                                          "--ek", str(yasak)))
+        self.assertEqual(len(self.kopru.islemler("baslat")), baslat_sayisi)
+
     def test_gonder_sinirlar_ve_adlar(self):
         self.hazir()
         metin = self.dosya("taslak.md", "**Sonuç:** x")
