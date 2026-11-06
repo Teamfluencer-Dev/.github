@@ -155,8 +155,11 @@ The köprü key is a secret: one line `tfb1.<…>.<…>` the TF Bilgi owner send
 **It never goes into a shell argument, never back into the chat, never into a file other
 than the one below.**
 
-1. `TFB kur` (no options; read-only) → `dosya_yeri` (an absolute path under the
-   helper's `gecici/` folder).
+1. `TFB kur` (no options; read-only; always exit 0) → `dosya_yeri` (an absolute path under
+   the helper's `gecici/` folder). If it reports `gecerli: false` or an `uyari` (the old key
+   was renewed or revoked, the key file is broken, or the bridge did not answer), relay the
+   `uyari` as one line and **continue with step 2**: the new key is checked on its own in
+   step 3 and replaces the old one. Never stop here.
 2. Write the user's message line that contains the key, as given, to `<dosya_yeri>` with
    the Write tool.
 3. `TFB kur --dosya <dosya_yeri>`: the helper finds the key, checks it with the bridge,

@@ -171,11 +171,46 @@ class SkillShellHygieneTest(unittest.TestCase):
             self.assertIn("Personal data never blocks and is never masked", govde, ad)
             self.assertIn("kisisel_veri", govde, ad)
         paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
-        self.assertIn("Secrets block the share.", paylas)
+        self.assertIn("Secrets in the user's input block the share.", paylas)
         self.assertIn("No question, no masking, no waiver.", paylas)
         siniflama = metin(PLUGIN / "skills" / "toplu-paylas" / "references" / "siniflama.md")
         self.assertIn("Kişisel veri engellemez", siniflama)
         self.assertNotIn('"influencer kimliği"', siniflama)  # artık ham engeli değil
+
+    def test_secret_rule_is_one_rule_and_user_text_is_scanned_before_writing(self):
+        """Review (.github#12): kullanıcının sözleri ve ekler D2'den (ham-ekle) önce taranır; taslaktaki bulgu ret değil."""
+        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        ana = paylas.split("## Gizli mode", 1)[0]
+        adim7 = ana.split("\n7. ", 1)[1].split("\nThen continue with D1", 1)[0]
+        self.assertIn("`TFB kb tara <D>/govde.md --json`", adim7)
+        self.assertLess(ana.index("TFB kb tara <D>/govde.md"), ana.index("\nD2. "))
+        self.assertLess(ana.index("TFB kb tara <D>/govde.md"), ana.index("TFB kb ham-ekle <file>"))
+        kural = ana.split("- **Secrets in the user's input block the share.**", 1)[1].split("\n- **", 1)[0]
+        self.assertIn("**your own draft**", kural)
+        self.assertIn("never refuse for it", kural)
+        d3 = ana.split("\nD3. ", 1)[1].split("\nD4. ", 1)[0]
+        self.assertIn("never refuse for it", d3)
+        self.assertNotIn("refuse the whole share", d3)
+
+    def test_direct_receipt_offers_undo_only_with_a_key(self):
+        """Review (.github#12): geri-al köprü anahtarı ister; anahtarsız doğrudan makbuz komutu vaat etmez."""
+        paylas = metin(PLUGIN / "skills" / "paylas" / "SKILL.md")
+        d6 = paylas.split("\nD6. ", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("`geri_al: true`", d6)
+        self.assertIn("geri almak için köprü anahtarı", d6)
+        self.assertIn("never offer the command then", d6)
+        self.assertNotRegex(d6.split("\n")[1], r"geri almak için: /paylas geri-al <id>`\.$")  # makbuz satırı koşulsuz değil
+        self.assertIn("`geri_al`", paylas.split("\n3. **Prepare.**", 1)[1].split("\n4. ", 1)[0])
+        readme = (PLUGIN.parents[1] / "README.md").read_text(encoding="utf-8")
+        self.assertIn("köprü anahtarı ister", readme)
+        self.assertNotIn("doğrudan yolda girdi kimliği); `/paylas geri-al <kod>` geri alır", readme)
+
+    def test_kur_status_never_stops_installation(self):
+        bilgi = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md")
+        bolum = bilgi.split("\n## Kur\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("always exit 0", bolum)
+        self.assertIn("**continue with step 2**", bolum)
+        self.assertIn("Never stop here.", bolum)
 
     def test_kopru_key_only_through_a_file(self):
         bilgi = metin(PLUGIN / "skills" / "bilgi" / "SKILL.md")

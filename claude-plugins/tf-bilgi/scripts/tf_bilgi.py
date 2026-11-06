@@ -108,6 +108,7 @@ import argparse
 import base64
 import datetime
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -152,12 +153,12 @@ KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi
 # çıkar (KB CLAUDE.md §12).
 # 0.5.0: 0.4.0 geçişi bitti (tf-bilgi#2 merge edildi; KB main'deki kb.py gizli paylaşımlı sürüm), 0.3.1'in hash'i
 # çıktı. Yönetim deposu (tf-bilgi-yonetim) GitHub'da henüz yok; açıldığında ilk push'u bu kb.py ile yapılır.
-# 0.6.0: köprü yolu. kb.py `haber: simdi` ve `kisisel_veri` alanını öğrendi, dogrula kişisel veriyi UYARI sayar
-# (Teamfluencer-Dev/tf-bilgi#5 head 0a3d046); geçişte eski (0.4.0) ve yeni hash birlikte durur, eski hash bir sonraki
-# sürümde çıkar. Köprü yolunda kb.py köprüden indirilir ve aynı pinle denetlenir (~/.tf-bilgi/kopru/araclar/kb.py).
+# 0.6.0: köprü yolu. kb.py `haber: simdi` ve `kisisel_veri` alanını öğrendi, dogrula kişisel veriyi UYARI ve köprü
+# anahtarını (tfb1.) sır sayar (Teamfluencer-Dev/tf-bilgi#5 head d24c0a4); geçişte eski (0.4.0) ve yeni hash birlikte
+# durur, eski hash bir sonraki sürümde çıkar. Köprü yolunda kb.py köprüden indirilir ve aynı pinle denetlenir (~/.tf-bilgi/kopru/araclar/kb.py).
 KB_SHA256 = (
     "e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",  # 0.4.0: tf-bilgi#2 head 76fd0e7
-    "93500b6e0196348b6f1da8516512453609e1ea10c4e9390eae71c5ffe32b5b3d",  # 0.6.0: tf-bilgi#5 head 0a3d046
+    "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f",  # 0.6.0: tf-bilgi#5 head d24c0a4
 )
 KOK_SECENEGI = re.compile(r"^--k(?:o(?:k)?)?(?:=|$)")        # --kok ve argparse kısaltmaları (--k, --ko)
 DEGERLI_SECENEK = re.compile(r"^--b(?:u(?:g(?:u(?:n)?)?)?)?$")  # --bugun ve kısaltmaları değer alır
@@ -616,6 +617,8 @@ def hazirla(argv):
                    f"{GUNLER[(gun + datetime.timedelta(days=i)).weekday()]}" for i in range(1, 15)],
         "gecici": str(onbellek_koku() / "gecici"),
         "islem": islem, "notlar": notlar, "yol": "dogrudan", **mesai_durumu(),
+        # /paylas geri-al köprü üzerinden gider: doğrudan yolda yalnız köprü anahtarı olan (TF_BILGI_YOL=dogrudan) geri alır
+        "geri_al": anahtar_yolu().is_file(),
     }
     if kisi is None:
         sonuc["kisiler"] = [{"anahtar": k, "ad": (v or {}).get("ad")} for k, v in sorted(kisiler.items())]
@@ -1214,25 +1217,30 @@ def kopru_girisi(ayar):
     return deger or None
 
 
-KOPRU_KISI_RE = re.compile(r"^kisi=([a-z][a-z0-9]*)(?![a-z0-9])")
+# Köprü yorumunun ilk satırı: `kisi=<anahtar>` ve ardından satır sonu, boşluk ya da "·" (köprü Code.gs ve KB bildir.py ile
+# aynı kural; ortak vektörler KB kopruler/paylas/test_vektorleri.json).
+KOPRU_KISI_RE = re.compile(r"^kisi=([a-z][a-z0-9]*)(?=$|[\s·])")
+
+
+def _yorum_satirlari(govde):
+    return str(govde or "").replace("\r\n", "\n").split("\n")
 
 
 def kopru_yorum_kisisi(yorum_, kopru, kisiler):
     """Köprü yorumu (yazarı köprünün GitHub girişi, ilk satırı `kisi=<anahtar>`) → o kişi; değilse None. Kural KB
-    bildir.py ile aynı (sözleşme §7); başka bir hesabın `kisi=` satırı hiçbir şey ifade etmez."""
+    bildir.py ve köprüyle aynı (sözleşme §7); başka bir hesabın `kisi=` satırı hiçbir şey ifade etmez."""
     login = str(((yorum_ or {}).get("user") or {}).get("login") or "").lower()
-    if not kopru or login != kopru:
+    if not kopru or login != str(kopru).lower():
         return None
-    ilk = (str((yorum_ or {}).get("body") or "").lstrip("﻿").splitlines() or [""])[0].strip()
-    m = KOPRU_KISI_RE.match(ilk)
+    m = KOPRU_KISI_RE.match(_yorum_satirlari((yorum_ or {}).get("body"))[0].strip())
     return m.group(1) if m and m.group(1) in kisiler else None
 
 
 def kopru_metni(govde):
-    """Köprü yorumunun metni: ilk satır (`kisi=…`) ve ardındaki boş satırlar atılır."""
-    satirlar = str(govde or "").splitlines()[1:]
-    while satirlar and not satirlar[0].strip():
-        satirlar.pop(0)
+    """Köprü yorumunun metni: ilk satır (`kisi=…`) ve ardındaki YALNIZ BİR boş satır atılır (köprüyle aynı)."""
+    satirlar = _yorum_satirlari(govde)[1:]
+    if satirlar and not satirlar[0].strip():
+        satirlar = satirlar[1:]
     return "\n".join(satirlar)
 
 
@@ -2058,7 +2066,8 @@ def kopru_cagir(islem, alanlar=None, zaman_asimi=KOPRU_ZAMAN_ASIMI, anahtar=None
     except urllib.error.HTTPError as e:
         raise Stop(f"TF Bilgi köprüsü yanıt vermedi (HTTP {e.code}). Biraz sonra tekrar dene; sürerse TF Bilgi "
                    "sorumlusuna haber ver.")
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+        # http.client.HTTPException: ör. IncompleteRead (yanıt yarıda kesildi); bağlantı hatası gibi yeniden denenir
         neden = getattr(e, "reason", None) or e.__class__.__name__
         raise Stop(f"TF Bilgi köprüsüne ulaşılamadı ({tek_satir(str(neden).replace(gizli, '***'), 120)}). İnternet "
                    "bağlantını kontrol edip tekrar dene.")
@@ -2199,7 +2208,7 @@ def hazirla_kopru(args):
         "takvim": [f"{(gun + datetime.timedelta(days=i)).isoformat()} "
                    f"{GUNLER[(gun + datetime.timedelta(days=i)).weekday()]}" for i in range(1, 15)],
         "gecici": str(gecici_dizin()), "islem": "kopru", "notlar": notlar, "yol": "kopru", **mesai_durumu(),
-        "kopru": kimlik,
+        "kopru": kimlik, "geri_al": True,
     }
 
 
@@ -2394,6 +2403,14 @@ def kopru_dosya_adi(ad, kullanilan):
     return aday
 
 
+def anahtar_icerir(yol):
+    """Dosyanın baytlarında bir köprü anahtarı (tfb1.…) var mı (metin olarak; ikili dosyada da düz geçen anahtar)."""
+    try:
+        return bool(ANAHTAR_ARA_RE.search(Path(yol).read_bytes().decode("utf-8", "replace")))
+    except OSError:
+        return False
+
+
 def kopru_tara(kok, yol):
     """Ayna kb.py'siyle (pinli) tarama → (çıkış, bulgular, neden)."""
     proc = sh(kb_komutu(kb_yolu(kok), "tara", str(yol), "--json"), cwd=kok, check=False, timeout=180,
@@ -2459,13 +2476,18 @@ def gonder(argv):
                 continue
             dosyalar.append((ad, yol, gorunen))
             kullanilan.add(ad)
+    onbellek = onbellek_koku().resolve()
     for ek in args.ek:
         yol = Path(ek).expanduser()
         if not yol.is_absolute():
             raise Stop(f"Ek mutlak yol olmalı: {ek}")
         if not yol.is_file():
             raise Stop(f"Ek bulunamadı: {ek}")
-        dosyalar.append((kopru_dosya_adi(yol.name, kullanilan), yol.resolve(), yol.name))
+        gercek = yol.resolve()
+        if gercek == onbellek or onbellek in gercek.parents:
+            raise Stop(f"{yol.name}: TF Bilgi'nin kendi klasöründeki ({onbellek}) dosyalar paylaşılmaz (köprü anahtarı, "
+                       "önbellek ve geçici kopyalar orada durur). Hiçbir şey gönderilmedi.")
+        dosyalar.append((kopru_dosya_adi(yol.name, kullanilan), gercek, yol.name))
     if len(dosyalar) > sinir["dosya_azami_sayi"]:
         raise Stop(f"Bir paylaşımda en çok {sinir['dosya_azami_sayi']} dosya gider ({len(dosyalar)} verildi); "
                    "ikiye böl.")
@@ -2478,6 +2500,11 @@ def gonder(argv):
                        "Hiçbir şey gönderilmedi.")
     if toplam > sinir["kayit_azami_bayt"]:
         raise Stop(f"Dosyaların toplamı çok büyük (en çok {sinir['kayit_azami_bayt'] // 1048576} MB); ikiye böl.")
+    # Köprü anahtarı hiçbir dosyayla gitmez (paylaşılırsa depoyu okuyan herkes o kişi adına köprüyü kullanabilirdi).
+    anahtarli = [gorunen for _, yol, gorunen in [("taslak.json", taslak_yolu, "taslak")] + dosyalar if anahtar_icerir(yol)]
+    if anahtarli:
+        raise Stop(f"Köprü anahtarı paylaşılmaz: {', '.join(anahtarli)} içinde bir TF Bilgi köprü anahtarı (tfb1.…) var. "
+                   "Çıkarıp tekrar dene; anahtar paroladır, kimseyle paylaşma. Hiçbir şey gönderilmedi.")
     # Tarama: taslak (başlık, özet, notlar) ve her dosya; gizlide yalnız taslak (belge hiç okunmaz).
     sirlar, kisisel, taranamayan = [], False, []
     for ad, yol, gorunen in [("taslak.json", taslak_yolu, "taslak (başlık/özet)")] + dosyalar:
@@ -2513,7 +2540,7 @@ def gonder(argv):
     try:
         for ad, yol, _ in dosyalar:
             kopru_yukle(kod, ad, yol, parca_bayt)
-        bit = kopru_cagir_tekrarla("bitir", {"kod": kod}, KOPRU_PARCA_ZAMAN_ASIMI)
+        bit = kopru_bitir(kod)
     except Stop as e:
         try:
             kopru_cagir("geri-al", {"hedef": kod})
@@ -2526,6 +2553,24 @@ def gonder(argv):
             "dosyalar": [{"ad": o["ad"], "boyut": o["boyut"]} for o in ozetler], "kisisel_veri": taslak["kisisel_veri"],
             "gizli": taslak["gizli"], "satir": kopru_makbuz(kod, taslak, dosyalama, kisiler, taslak["kisisel_veri"]),
             "notlar": notlar}
+
+
+def kopru_bitir(kod):
+    """bitir: köprüde idempotent (ikinci çağrı aynı yanıtı `tekrar: true` ile döner). Eski köprü ikinci çağrıda
+    "zaten tamamlandı" der: yanıtı kaybolan ilk `bitir` başarılı olmuştur, başarı sayılır (geri-al yapılmaz). Bağlantı
+    hatası ve geçici Drive hatası yeniden denenir; köprünün diğer retleri hemen durur."""
+    for deneme in range(KOPRU_DENEME):
+        try:
+            return kopru_cagir("bitir", {"kod": kod}, KOPRU_PARCA_ZAMAN_ASIMI)
+        except KopruHatasi as e:
+            if e.kod == "durum" and "zaten tamamlandı" in str(e):
+                return {"kod": kod, "tekrar": True}
+            if e.kod != "drive" or deneme == KOPRU_DENEME - 1:
+                raise
+        except Stop:
+            if deneme == KOPRU_DENEME - 1:
+                raise
+        time.sleep(KOPRU_BEKLE)
 
 
 def kopru_yukle(kod, ad, yol, parca_bayt):
@@ -2648,11 +2693,26 @@ def kur(argv):
         return {"silindi": vardi, "anahtar": False, "satir": "Köprü anahtarı kaldırıldı." if vardi else
                 "Köprü anahtarı zaten yoktu."}
     if args.dosya is None:
+        # Durum hiçbir zaman kurulumu kilitlemez: eski anahtar silinmiş (anahtarUret yeniledi), dosya bozuk ya da köprü
+        # yanıt vermiyor olsa da çıkış 0; yeni anahtar `--dosya` ile eskiden bağımsız doğrulanıp üzerine yazılır.
         if not yol.is_file():
-            return {"anahtar": False, "dosya_yeri": dosya_yeri, "yol": "dogrudan"}
-        kim = kopru_cagir("kim")
-        return {"anahtar": True, "kisi": kim.get("kisi"), "ad": kim.get("ad"), "depo": kim.get("depo"),
-                "dosya_yeri": dosya_yeri, "yol": yol_sec()}
+            return {"anahtar": False, "gecerli": None, "dosya_yeri": dosya_yeri, "yol": "dogrudan"}
+        try:
+            yol_simdi = yol_sec()
+        except Stop:
+            yol_simdi = "kopru"
+        try:
+            kim = kopru_cagir("kim", anahtar=anahtar_oku())
+        except KopruHatasi as e:
+            return {"anahtar": True, "gecerli": False, "dosya_yeri": dosya_yeri, "yol": yol_simdi,
+                    "uyari": f"Kayıtlı köprü anahtarı geçerli değil: {e}"}
+        except Stop as e:
+            bozuk = not anahtar_coz(yol.read_text(encoding="utf-8", errors="replace")) if yol.is_file() else False
+            return {"anahtar": True, "gecerli": False if bozuk else None, "dosya_yeri": dosya_yeri, "yol": yol_simdi,
+                    "uyari": (f"Kayıtlı köprü anahtarı bozuk ({yol}); yenisini kur." if bozuk else
+                              f"Köprü şu an doğrulanamadı: {e}")}
+        return {"anahtar": True, "gecerli": True, "kisi": kim.get("kisi"), "ad": kim.get("ad"), "depo": kim.get("depo"),
+                "dosya_yeri": dosya_yeri, "yol": yol_simdi}
     kaynak = gecici_alti(args.dosya, "--dosya")
     try:
         if not kaynak.is_file():

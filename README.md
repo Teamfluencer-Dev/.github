@@ -154,7 +154,7 @@ ayrı yapılır.
 /paylas api#1976 web#689 merge sırası devri
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /paylas gizli: Ayşe'ye, yalnız o görsün ./teklif.pdf   # belge okunmaz, Drive'da paylaşılır
-/paylas geri-al G-4k9x2m     # köprü makbuzundaki kod ya da kendi girdi kimliğin
+/paylas geri-al G-4k9x2m     # köprü makbuzundaki kod ya da kendi girdi kimliğin (köprü anahtarı gerekir)
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
@@ -185,13 +185,17 @@ doğrudan yolda, mesai dışında (hafta sonu ya da 19:00–08:30 İstanbul) ve 
 (`haber: hemen`: bildirim 08:30 özetinde). Mesai içinde alıcı varsa `haber: hemen`;
 alıcı yoksa istek ve bildirim yoktur. Köprü yolunda bu soru da sorulmaz: kütüphaneci yalnız
 mesai içinde dosyalar ve haber o zaman gider. Gönderimden sonra tek satır makbuz çıkar
-(köprüde `G-xxxxxx` kodu, doğrudan yolda girdi kimliği); `/paylas geri-al <kod>` geri alır
-(dosyalanmadıysa kayıt atlanır, dosyalandıysa kütüphaneci girdiyi `durum: iptal` yapar).
+(köprüde `G-xxxxxx` kodu, doğrudan yolda girdi kimliği). Geri alma köprü üzerinden gider ve
+köprü anahtarı ister: `/paylas geri-al <kod>` (dosyalanmadıysa kayıt atlanır, dosyalandıysa
+kütüphaneci girdiyi `durum: iptal` yapar). Anahtarı olmayan doğrudan yol kullanıcısının
+makbuzunda geri alma komutu yer almaz; yerine "geri almak için köprü anahtarı gerekir
+(`/bilgi kur`)" yazar.
 İstisnalar: gizli paylaşım (Drive adımları ve üç onay sorusu kalır) ve `/toplu-paylas`
 (tek onay tablosu kalır).
 
-**Sır engellenir, kişisel veri etiketlenir.** Her dosya ve taslak `kb.py tara` ile taranır.
-Şifre, API anahtarı, token, bağlantı dizesi ya da özel anahtar bulunursa paylaşım reddedilir
+**Sır engellenir, kişisel veri etiketlenir.** Kullanıcının kendi sözleri ve her ek, depoya
+ya da köprüye bir şey yazılmadan önce `kb.py tara` ile taranır. Şifre, API anahtarı, token,
+bağlantı dizesi, özel anahtar ya da TF Bilgi köprü anahtarı (`tfb1.…`) bulunursa paylaşım reddedilir
 (soru yok, maskeleme yok); kullanıcıya yalnız tür, dosya ve satır söylenir, değer asla.
 Kişisel veri (telefon, e-posta, TCKN, IBAN, adres, influencer kimliği) engellenmez ve
 maskelenmez: girdiye `kisisel_veri: var` düşer. Taranamayan dosya (görsel, arşiv, metin
@@ -313,7 +317,7 @@ eklentiyi güncellemeyi söyler; `kb.py` yalıtılmış kipte (`python3 -I`) ça
 
 Geçişte `KB_SHA256` eski ve yeni hash'i birlikte taşır; eski hash bir sonraki sürümde çıkar.
 0.6.0 geçişi: `kb.py` `haber: simdi` ve `kisisel_veri` alanını öğrendi
-(Teamfluencer-Dev/tf-bilgi#5 head `0a3d046`, sha256 `93500b6e…`); 0.6.0 eski hash'i
+(Teamfluencer-Dev/tf-bilgi#5 head `d24c0a4`, sha256 `74ae1f87…`); 0.6.0 eski hash'i
 (`e6b4e224…`, 0.4.0) ve yeni hash'i birlikte taşır. Yayın sırası: önce bu
 repodaki eklenti PR'ı, aynı gün hemen ardından KB PR'ı. Köprü yolunda `kb.py` köprüden
 indirilir (`~/.tf-bilgi/kopru/araclar/kb.py`) ve aynı pinle denetlenir.

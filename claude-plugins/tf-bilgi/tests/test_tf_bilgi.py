@@ -507,9 +507,9 @@ class KbSurumTest(Base):
 
     def test_gecis_iki_surumu_de_kabul_eder(self):
         """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): 0.6.0 = 0.4.0'ın kb.py'si (tf-bilgi#2) + köprü
-        kb.py'si (tf-bilgi#5 head 0a3d046: haber simdi, kisisel_veri)."""
+        kb.py'si (tf-bilgi#5 head d24c0a4: haber simdi, kisisel_veri, tfb1 taraması)."""
         self.assertEqual(GERCEK_KB_SHA256, ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",
-                                            "93500b6e0196348b6f1da8516512453609e1ea10c4e9390eae71c5ffe32b5b3d"))
+                                            "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f"))
         self.assertNotIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)  # 0.3.1
         self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
         eski_stub = STUB_KB + "# eski\n"
@@ -1741,6 +1741,10 @@ KOPRU_DAGITIM = "AKfycbSahteDagitim_0123-456789"
 KOPRU_ANAHTAR = f"tfb1.{KOPRU_DAGITIM}.{KOPRU_GIZLI}"
 
 
+class KopruRet(Exception):
+    """Sahte köprünün işlem içinden reddi: (hata, kod)."""
+
+
 class SahteKopru:
     """Köprü sözleşmesi v1'in sahte karşılığı (ağ yok): tf_bilgi.kopru_tasi yerine çağrılır."""
 
@@ -1751,6 +1755,8 @@ class SahteKopru:
         self.hatalar = {}        # islem → (hata, kod): köprünün reddi
         self.kopuk = {}          # islem → kaç kez bağlantı hatası
         self.ozel = {}           # islem → yanıt sözlüğü
+        self.kayip = {}          # islem → kaç kez: köprü işler ama yanıt istemciye ulaşmaz (bağlantı kopar)
+        self.eski_bitir = False  # eski köprü: ikinci bitir "zaten tamamlandı" (durum) der
         self.parca_bayt = 5
 
     def islemler(self, ad=None):
@@ -1771,7 +1777,14 @@ class SahteKopru:
             return self.yanit({"tamam": False, "hata": hata, "kod": kod})
         if islem in self.ozel:
             return self.yanit({"tamam": True, **self.ozel[islem]})
-        return self.yanit({"tamam": True, **getattr(self, "i_" + islem.replace("-", "_"))(govde)})
+        try:
+            yanit = {"tamam": True, **getattr(self, "i_" + islem.replace("-", "_"))(govde)}
+        except KopruRet as e:
+            yanit = {"tamam": False, "hata": e.args[0], "kod": e.args[1]}
+        if self.kayip.get(islem):
+            self.kayip[islem] -= 1
+            raise tf_bilgi.urllib.error.URLError("yanıt yolda kayboldu")
+        return self.yanit(yanit)
 
     @staticmethod
     def yanit(veri):
@@ -1811,6 +1824,11 @@ class SahteKopru:
 
     def i_bitir(self, g):
         k = self.kayitlar[g["kod"]]
+        if k["bitti"]:  # köprü gibi: ikinci bitir aynı yanıt (idempotent); eski köprü "zaten tamamlandı" derdi
+            if self.eski_bitir:
+                raise KopruRet(g["kod"] + " zaten tamamlandı.", "durum")
+            return {"kod": g["kod"], "kayit": "kayit", "dosyalar": list(k["beyan"]), "dosyalama": "yarın 09:05",
+                    "tekrar": True}
         for ad, beyan in k["beyan"].items():
             assert hashlib.sha256(k["veri"][ad]).hexdigest() == beyan["sha256"], ad
             assert len(k["veri"][ad]) == beyan["boyut"], ad
@@ -2076,6 +2094,8 @@ class KopruTest(Base):
         self.assertEqual(self.ok("geri-al", "B-20261105-mert-01")["sonuc"], "kaydedildi")
         (self.cache / "anahtar").unlink()
         self.assertIn("köprü anahtarın yok", self.stop("geri-al", "G-abc123"))
+        self.assertIn("köprü anahtarın yok", self.stop("geri-al", "B-20261105-mert-01"))
+        # anahtarsız doğrudan yolda makbuz geri-al vaat etmez: hazirla geri_al=false (KopruDogrudanYolTest, hijyen testi)
 
     def test_okuma_ara_girdi_alindi(self):
         self.hazir()
@@ -2132,14 +2152,154 @@ class KopruTest(Base):
         self.assertEqual(self.gh_calls(), [])
 
     def test_kopru_yaniti_bozuksa_ya_da_http_hatasi(self):
-        self.ok("kur")
+        self.assertTrue(self.ok("kur")["gecerli"])
+        f = lambda: self.dosya("anahtar.txt", KOPRU_ANAHTAR, self.cache / "gecici")  # noqa: E731
         with mock.patch.object(tf_bilgi, "kopru_tasi", lambda *a: b"<html>Sign in</html>"):
-            self.assertIn("yanıtı anlaşılamadı", self.stop("kur"))
+            durum = self.ok("kur")  # durum çağrısı kurulumu kilitlemez (review 1)
+            self.assertEqual((durum["anahtar"], durum["gecerli"]), (True, None))
+            self.assertIn("yanıtı anlaşılamadı", durum["uyari"])
+            self.assertIn("yanıtı anlaşılamadı", self.stop("kur", "--dosya", f()))  # kurulum köprüyle doğrular
 
         def http_hatasi(*a):
             raise tf_bilgi.urllib.error.HTTPError("u", 500, "x", {}, None)
         with mock.patch.object(tf_bilgi, "kopru_tasi", http_hatasi):
-            self.assertIn("yanıt vermedi (HTTP 500)", self.stop("kur"))
+            self.assertIn("yanıt vermedi (HTTP 500)", self.ok("kur")["uyari"])
+            self.assertIn("yanıt vermedi (HTTP 500)", self.stop("kur", "--dosya", f()))
+        self.assertEqual((self.cache / "anahtar").read_text(), KOPRU_ANAHTAR + "\n")  # eski anahtar yerinde
+
+        def yarim(*a):
+            raise tf_bilgi.http.client.IncompleteRead(b"{", 10)
+        with mock.patch.object(tf_bilgi, "kopru_tasi", yarim):
+            self.assertIn("köprüsüne ulaşılamadı (IncompleteRead", self.stop("oku", "SON.md"))  # traceback değil
+
+    def test_bitir_yaniti_kaybolursa_yeniden_dener_geri_almaz(self):
+        self.hazir()
+        self.kopru.kayip["bitir"] = 1  # köprü kaydı tamamladı, yanıt istemciye ulaşmadı
+        r = self.ok("gonder", "--taslak", self.taslak(), "--metin", self.dosya("taslak.md", "kısa"))
+        self.assertTrue(self.kopru.kayitlar[r["kod"]]["bitti"])
+        self.assertEqual(len(self.kopru.islemler("bitir")), 2)
+        self.assertEqual(self.kopru.islemler("geri-al"), [])  # tamamlanan paylaşım geri alınmaz
+        self.assertIn("yarın 09:05 turunda", r["satir"])
+        self.kopru.kayip["bitir"] = 1
+        self.kopru.eski_bitir = True  # eski köprü: ikinci bitir "zaten tamamlandı"
+        r = self.ok("gonder", "--taslak", self.taslak(), "--metin", self.dosya("taslak.md", "kısa"))
+        self.assertTrue(self.kopru.kayitlar[r["kod"]]["bitti"])
+        self.assertEqual(self.kopru.islemler("geri-al"), [])
+        self.assertIn("kütüphaneci bir sonraki turunda dosyalar", r["satir"])
+
+    def test_gonder_kopru_anahtarini_paylasmaz(self):
+        self.hazir()
+        ek = self.tmp / "kurulum.md"
+        ek.write_text("Anahtarım: " + KOPRU_ANAHTAR, encoding="utf-8")
+        metin = self.dosya("taslak.md", "**Sonuç:** x")
+        for argv in (("--ek", str(ek)), ("--ek", str(self.cache / "anahtar")),
+                     ("--govde", self.dosya("govde.md", "anahtarım " + KOPRU_ANAHTAR))):
+            out = self.stop("gonder", "--taslak", self.taslak(), "--metin", metin, *argv)
+            self.assertNotIn(KOPRU_GIZLI, out)
+            self.assertTrue("Köprü anahtarı paylaşılmaz" in out or "kendi klasöründeki" in out, out)
+        aynadaki = self.cache / "kopru" / "KONULAR.md"  # önbellek klasörünün altındaki her dosya
+        self.assertIn("kendi klasöründeki", self.stop("gonder", "--taslak", self.taslak(), "--metin", metin,
+                                                      "--ek", str(aynadaki)))
+        notlu = self.taslak(notlar=["anahtar " + KOPRU_ANAHTAR])
+        self.assertIn("Köprü anahtarı paylaşılmaz", self.stop("gonder", "--taslak", notlu, "--metin", metin))
+        self.assertEqual(self.kopru.islemler("baslat"), [])
+
+    def test_gonder_sinirlar_ve_adlar(self):
+        self.hazir()
+        metin = self.dosya("taslak.md", "**Sonuç:** x")
+        ekler = []
+        for i in range(10):
+            e = self.tmp / f"ek{i}.md"
+            e.write_text("içerik " + str(i), encoding="utf-8")
+            ekler += ["--ek", str(e)]
+        self.assertIn("en çok 10 dosya", self.stop("gonder", "--taslak", self.taslak(), "--metin", metin, *ekler))
+        buyuk = self.tmp / "buyuk.md"
+        buyuk.write_text("x" * 64, encoding="utf-8")
+        with mock.patch.dict(tf_bilgi.KOPRU_SINIRLAR, {"dosya_azami_bayt": 32}):
+            self.kopru.ozel["kim"] = {**self.kopru.i_kim({}), "sinirlar": {"dosya_azami_bayt": 32}}
+            self.hazir()
+            self.assertIn("buyuk.md çok büyük", self.stop("gonder", "--taslak", self.taslak(), "--metin", metin,
+                                                          "--ek", str(buyuk)))
+        self.kopru.ozel["kim"] = {**self.kopru.i_kim({}), "sinirlar": {"kayit_azami_bayt": 40}}
+        self.hazir()
+        self.assertIn("toplamı çok büyük", self.stop("gonder", "--taslak", self.taslak(), "--metin", metin,
+                                                     "--ek", str(buyuk)))
+        self.assertEqual(self.kopru.islemler("baslat"), [])
+        del self.kopru.ozel["kim"]
+        self.hazir()
+        ad1, alt, ad3 = self.tmp / "Çalışma.md", self.tmp / "alt", self.tmp / "meta.json"
+        ad1.write_text("bir", encoding="utf-8")
+        alt.mkdir()
+        (alt / "Calisma.md").write_text("iki", encoding="utf-8")
+        ad3.write_text("{}", encoding="utf-8")
+        r = self.ok("gonder", "--taslak", self.taslak(), "--metin", metin, "--ek", str(ad1),
+                    "--ek", str(alt / "Calisma.md"), "--ek", str(ad3))
+        adlar = list(self.kopru.kayitlar[r["kod"]]["veri"])
+        self.assertEqual(adlar, ["taslak.md", "Calisma.md", "Calisma-2.md", "meta-2.json"])  # çakışma ve ayrılmış ad
+
+    def test_mesai_sinirlari(self):
+        for an, sessiz in (("2026-11-05T08:29:00+03:00", True), ("2026-11-05T08:30:00+03:00", False),
+                           ("2026-11-05T18:59:00+03:00", False), ("2026-11-05T19:00:00+03:00", True),
+                           ("2026-11-06T19:00:00+03:00", True), ("2026-11-09T08:30:00+03:00", False),
+                           ("2026-11-08T12:00:00+03:00", True)):
+            os.environ["TF_BILGI_SIMDI"] = an
+            self.assertEqual(tf_bilgi.mesai_durumu()["sessiz"], sessiz, an)
+        os.environ["TF_BILGI_SIMDI"] = "2026-11-06T19:00:00+03:00"  # Cuma 19:00
+        self.assertEqual(tf_bilgi.mesai_durumu()["ozet_zamani"], "Pzt 08:30")
+
+
+class KopruAnahtarYenilemeTest(KopruTest):
+    """Review (.github#12): anahtar yenilenince ya da bozulunca `/bilgi kur` kilitlenmez."""
+
+    def test_eski_anahtar_gecersizken_yeni_anahtar_kurulur(self):
+        eski = "tfb1." + KOPRU_DAGITIM + "." + "e" * 64 + "\n"  # anahtarUret eskisini sildi
+        (self.cache / "anahtar").write_text(eski)
+        code, out = self.run_main("kur")  # Kur 1. adım kurulumu kilitlememeli
+        self.assertEqual(code, 0, out)
+        durum = json.loads(out)
+        self.assertEqual((durum["anahtar"], durum["gecerli"]), (True, False))
+        self.assertEqual(durum["dosya_yeri"], str(self.cache / "gecici" / "anahtar.txt"))
+        self.assertIn("Anahtar tanınmadı.", durum["uyari"])
+        self.assertNotIn("e" * 64, out)
+        f = self.dosya("anahtar.txt", KOPRU_ANAHTAR, self.cache / "gecici")
+        r = self.ok("kur", "--dosya", f)
+        self.assertEqual((r["kuruldu"], r["kisi"]), (True, "mert"))
+        self.assertEqual((self.cache / "anahtar").read_text(), KOPRU_ANAHTAR + "\n")
+        (self.cache / "anahtar").write_text("tfb1.kisa.abc\n")  # bozuk dosya da aynı yoldan düzelir
+        code, out = self.run_main("kur")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["gecerli"], False)
+        self.assertIn("bozuk", json.loads(out)["uyari"])
+        r = self.ok("kur", "--dosya", self.dosya("anahtar.txt", KOPRU_ANAHTAR, self.cache / "gecici"))
+        self.assertTrue(r["kuruldu"])
+
+    def test_kopru_kapaliyken_durum_dosya_yerini_verir(self):
+        self.kopru.kopuk["kim"] = 5
+        durum = self.ok("kur")
+        self.assertEqual((durum["anahtar"], durum["gecerli"]), (True, None))
+        self.assertIn("ulaşılamadı", durum["uyari"])
+        self.assertTrue(durum["dosya_yeri"].endswith("gecici/anahtar.txt"))
+
+
+# Ortak vektörler: KB deposundaki kopruler/paylas/test_vektorleri.json'dan AYNEN kopyalandı (köprü Code.gs ve KB
+# bildir.py aynı vektörleri kullanır). KB'de değişirse buraya da kopyalanır.
+KOPRU_VEKTORLERI = json.loads('{"aciklama": "Köprü yorumu ve tercih satırı için ortak test vektörleri: kopruler/paylas/test_code.js (yorumYazari_, tercihCoz_) ve araclar/test_bildir.py (yorum_kisisi, tercihleri_coz) aynı sonucu vermeli. Eklentideki kopru_yorum_kisisi aynı kuralı izler.", "kopru": "tf-kopru", "kisiler": {"ayse": {"ad": "Ayşe Örnek", "alanlar": ["ekip"], "github": "ayse-gh"}, "mert": {"ad": "Mert Örnek", "alanlar": ["ekip"], "github": null}, "can": {"ad": "Can Örnek", "alanlar": ["ekip"], "github": "tf-kopru"}}, "yorum_yazari": [{"ad": "köprü yorumu: ilk satır kisi=, ardından bir boş satır atılır", "login": "tf-kopru", "govde": "kisi=mert · Mert (TF Bilgi köprüsü)\\n\\nFiyatı 12.990 yapalım.", "kisi": "mert", "metin": "Fiyatı 12.990 yapalım."}, {"ad": "köprü girişi büyük harfle de eşleşir; boş satır yoksa metin ikinci satırdan", "login": "TF-Kopru", "govde": "kisi=mert\\nKısa not.", "kisi": "mert", "metin": "Kısa not."}, {"ad": "yalnız bir boş satır atılır", "login": "tf-kopru", "govde": "kisi=mert · Mert\\n\\n\\nİkinci paragraf.", "kisi": "mert", "metin": "\\nİkinci paragraf."}, {"ad": "kisi= anahtarından sonra boşluk ya da · gelmeli (kisi=mert-x sayılmaz); köprü girişi kisiler.json\'da can", "login": "tf-kopru", "govde": "kisi=mert-x · ?\\n\\nX", "kisi": "can", "metin": "kisi=mert-x · ?\\n\\nX"}, {"ad": "kisiler.json\'da olmayan kişi: köprü girişinin kendi eşlemesi", "login": "tf-kopru", "govde": "kisi=kimse · ?\\n\\nX", "kisi": "can", "metin": "kisi=kimse · ?\\n\\nX"}, {"ad": "köprü olmayan hesabın kisi= satırı sayılmaz", "login": "ayse-gh", "govde": "kisi=mert · sahte\\n\\nX", "kisi": "ayse", "metin": "kisi=mert · sahte\\n\\nX"}, {"ad": "tanınmayan hesap", "login": "yabanci", "govde": "Merhaba", "kisi": null, "metin": "Merhaba"}], "tercih": {"yoneticiler": ["ayse"], "yorumlar": [{"id": 1, "user": {"login": "tf-kopru"}, "body": "tercih: kisi=mert kanal=mail", "created_at": "2026-11-05T09:00:00Z", "updated_at": "2026-11-05T09:00:00Z"}, {"id": 2, "user": {"login": "tf-kopru"}, "body": "tercih: kanal=whatsapp", "created_at": "2026-11-05T09:10:00Z", "updated_at": "2026-11-05T09:10:00Z"}, {"id": 3, "user": {"login": "ayse-gh"}, "body": "tercih: kanal=slack,mail", "created_at": "2026-11-05T09:20:00Z", "updated_at": "2026-11-05T09:20:00Z"}, {"id": 4, "user": {"login": "tf-kopru"}, "body": "tercih: kisi=kimse kanal=mail", "created_at": "2026-11-05T09:30:00Z", "updated_at": "2026-11-05T09:30:00Z"}, {"id": 5, "user": {"login": "tf-kopru"}, "body": "tercih: kisi=ayse kanal=mail", "created_at": "2026-11-05T09:40:00Z", "updated_at": "2026-11-05T12:00:00Z"}, {"id": 6, "user": {"login": "yabanci"}, "body": "tercih: kisi=mert kanal=slack", "created_at": "2026-11-05T09:50:00Z", "updated_at": "2026-11-05T09:50:00Z"}], "beklenen": {"mert": {"kanallar": ["mail"], "kaynak": "yorum 2026-11-05 · tf-kopru"}, "can": {"kanallar": ["whatsapp"], "kaynak": "yorum 2026-11-05 · tf-kopru"}, "ayse": {"kanallar": ["slack", "mail"], "kaynak": "yorum 2026-11-05 · ayse-gh"}}}}')
+
+
+class KopruVektorTest(unittest.TestCase):
+    def test_kopru_yorumu_ve_tercih_ortak_vektorler(self):
+        v = KOPRU_VEKTORLERI
+        kopru = tf_bilgi.kopru_girisi({"kopru_github": v["kopru"]})
+        gh_kisi = {str(b["github"]).lower(): k for k, b in v["kisiler"].items() if b.get("github")}
+        for d in v["yorum_yazari"]:
+            y = {"user": {"login": d["login"]}, "body": d["govde"]}
+            kopru_kisi = tf_bilgi.kopru_yorum_kisisi(y, kopru, v["kisiler"])
+            self.assertEqual(kopru_kisi or gh_kisi.get(d["login"].lower()), d["kisi"], d["ad"])
+            metin = tf_bilgi.kopru_metni(d["govde"]) if kopru_kisi else d["govde"]
+            self.assertEqual(metin, d["metin"], d["ad"])
+        t = v["tercih"]
+        sonuc, _ = tf_bilgi.tercih_coz(t["yorumlar"], v["kisiler"], set(t["yoneticiler"]), kopru)
+        self.assertEqual(sonuc, t["beklenen"])
 
 
 class KopruHttpTest(unittest.TestCase):
@@ -2219,6 +2379,27 @@ class KopruDogrudanYolTest(Base):
         plan = self.ok("yorum", YORUM_GIRDI, "--dosya", str(yol))
         # köprünün açtığı sayfa "açan" sayılmaz; köprü yorumu ayse'ye sayılır (yazar olarak zaten var)
         self.assertEqual([(a["kisi"], a["neden"]) for a in plan["alicilar"]], [("ayse", "yazar"), ("zeynep", "alıcı")])
+
+    def test_dogrudan_geri_al_bayragi_ve_girdi(self):
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
+        self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-01.md", YORUM_GIRDI_METNI)
+        h = self.ok("hazirla")
+        self.assertEqual((h["yol"], h["geri_al"]), ("dogrudan", False))  # anahtarsız: makbuz geri-al vaat etmez
+        g = self.ok("girdi", "B-20261105-ayse-01")  # /bilgi oku: doğrudan yolda origin/main'den
+        self.assertIn("id: B-20261105-ayse-01", g["icerik"])
+        self.assertEqual((g["gizli"], g["url"]), (False, "https://github.com/Teamfluencer-Dev/tf-bilgi/blob/main/"
+                                                          "girdiler/2026/11/B-20261105-ayse-01.md"))
+        self.assertIn("bulunamadı", self.stop("girdi", "B-20261105-ayse-09"))
+        self.assertIn("köprü anahtarın yok", self.stop("geri-al", "B-20261105-ayse-01"))
+        self.cache.mkdir(parents=True, exist_ok=True)
+        (self.cache / "anahtar").write_text(KOPRU_ANAHTAR + "\n")
+        os.environ["TF_BILGI_YOL"] = "dogrudan"  # anahtarı olan yazan doğrudan yolu seçti
+        h = self.ok("hazirla")
+        self.assertEqual((h["yol"], h["geri_al"]), ("dogrudan", True))
+        kopru = SahteKopru({})
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
+            self.assertEqual(self.ok("geri-al", "B-20261105-ayse-01")["sonuc"], "kaydedildi")
+        self.assertEqual(kopru.islemler("geri-al")[0]["hedef"], "B-20261105-ayse-01")  # geri-al köprüye gider
 
     def test_bildirim_plani_simdi_sessiz_saati_deler(self):
         os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
