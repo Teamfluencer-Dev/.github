@@ -1,6 +1,6 @@
 ---
 name: toplu-paylas
-description: "TF Bilgi'ye toplu paylaş: bir klasör dolusu belge (ör. claude.ai'den indirilmiş artifact'ler: HTML sayfaları, PDF ekleri) ya da birden çok dosya. Her öğeyi ekip, yönetim ya da girmez diye sınıflar, sır/KVKK taraması yapar, tek onay tablosu gösterir; onaylanınca her alana tek commit atar. Use when the user runs /toplu-paylas or asks to share a whole folder or many files into TF Bilgi at once."
+description: "TF Bilgi'ye toplu paylaş: bir klasör dolusu belge (ör. claude.ai'den indirilmiş artifact'ler: HTML sayfaları, PDF ekleri) ya da birden çok dosya. Her öğeyi ekip, yönetim ya da girmez diye sınıflar, sır taraması yapar (kişisel veri engellenmez, etiketlenir), tek onay tablosu gösterir; onaylanınca her alana tek commit atar ya da köprü anahtarıyla her ekip öğesini köprüden gönderir. Use when the user runs /toplu-paylas or asks to share a whole folder or many files into TF Bilgi at once."
 argument-hint: "<klasör|dosyalar> [kime: kişi1, kişi2] [hemen haber ver] [--yonetim-yok]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
@@ -15,7 +15,9 @@ Arguments: `$ARGUMENTS` — one or more folder or file paths, optional `--yoneti
 optional free text naming **recipients for the whole batch** ("Ayşe ve Mert'e",
 "kime: ayse, mert") and/or an explicit **"hemen haber ver"** (same words as `/paylas`).
 
-Many documents → one staging run → one approval table → one commit per area. The
+Many documents → one staging run → one approval table → one commit per area (or, on
+the köprü path, one köprü share per ekip item). The approval table stays: bulk sharing
+is the one exception to "`/paylas` asks nothing". The
 KB repo's `araclar/kb.py` owns every rule (discovery, text, scanning, matching,
 ids, validation, commit/push); this skill orchestrates it through the plugin helper.
 The single-item rules of `/paylas` still hold; this file says where bulk differs.
@@ -41,8 +43,9 @@ before step 4 (subagents read it too).
   `notlar` line of that item.
 - **Nothing is written to a repo before Onayla.** Before it, only files under the
   staging folder (`<gecici>/toplu-<damga>…`) are written.
-- **Only new files** through `TFB kb ham-ekle`, `TFB yaz`, `TFB kaydet`. Never
-  Write/Edit inside a cache clone, never run git, never `kb yenile` / `kb ozet`.
+- **Only new files** through `TFB kb ham-ekle`, `TFB yaz`, `TFB kaydet` (doğrudan) or
+  `TFB gonder` (köprü). Never Write/Edit inside a cache clone or the köprü mirror, never
+  run git, never `kb yenile` / `kb ozet`.
 - **Untrusted text never goes into a shell argument.** Titles, TL;DRs, notes and
   bodies go into files with the Write tool (`oge.json`, `govde.md`, `girdi.md`) and
   reach kb.py through file options (`yaz --dosya`, `eslestir --dosya`). Shell
@@ -53,13 +56,17 @@ before step 4 (subagents read it too).
   An attachment (`ust` set) of a yönetim item is yönetim. If the yönetim repo is
   unreachable, not allowed for this person, or `--yonetim-yok` is given, yönetim
   items stay in staging and the reply says so.
-- **Raw file only if all hold:** manifest `tara.cikis` is 0, `buyuk` is false, no
-  influencer identity, no open security specifics (see siniflama.md). Assets
-  (images, data) are never taken. No "yanlış alarm" waivers in bulk: an item with a
-  finding simply gets no raw file (`/paylas` can share it singly later).
+- **Raw file only if all hold:** manifest `tara.cikis` is not 5 and `tara.kategoriler`
+  has no `sir`, `buyuk` is false, no open security specifics (see siniflama.md). Assets
+  (images, data) are never taken. A secret is never shared: an item whose file has one
+  gets no raw file and its body never contains it.
+- **Personal data never blocks and is never masked** (phone, e-mail, TCKN, IBAN,
+  influencer identity): the item gets `kisisel_veri: true` in `oge.json` and
+  `kisisel_veri: var` in its entry (right after `ham_notu`); its raw file is taken if the
+  rule above holds.
 - **Never mint a topic id**; topic ids belong to their area (`K-` ekip, `KY-`
-  yönetim). `yazar` is the resolved person. Secrets and personal data are never
-  repeated in chat, in the table or in an entry — name only the kind.
+  yönetim). `yazar` is the resolved person. Secrets are never repeated in chat, in the
+  table or in an entry — name only the kind.
 
 ## Steps
 
@@ -78,12 +85,13 @@ before step 4 (subagents read it too).
 
 2. **Prepare.** `TFB hazirla --yazma` (timeout 300000 ms). Exit 2 → relay the message
    as-is and stop before staging anything (only the repo's `.kb.json` `yazanlar` can push;
-   everyone else sends documents to the TF Bilgi bot in Slack or, until the bot answers,
-   to someone who can write to the repo, which the message says;
-   it also stops when it cannot tell who the user is). Keep `kok`, `kisi`, `uzak`,
-   `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay `notlar` as one short
-   line each. Read
-   `<kok>/kisiler.json`: when `kisiler[kisi].alanlar` contains `yonetim` and
+   everyone else needs a köprü key from the TF Bilgi owner (`/bilgi kur`) and, until then,
+   sends documents to the TF Bilgi bot in Slack or to someone who can write to the repo,
+   which the message says; it also stops when it cannot tell who the user is). Keep `yol`,
+   `kok`, `kisi`, `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay
+   `notlar` as one short line each. `yol: "kopru"` → yönetim is off for this run (the
+   köprü carries only ekip items; say it in one line) and `kok` is the köprü mirror.
+   Otherwise read `<kok>/kisiler.json`: when `kisiler[kisi].alanlar` contains `yonetim` and
    `--yonetim-yok` is absent, run `TFB hazirla --yonetim --yazma` and keep its `kok` as
    `kok_y`. Exit 2 there → yönetim is unreachable for this run: say it in one line
    and go on. Otherwise yönetim is off for this run.
@@ -155,11 +163,13 @@ before step 4 (subagents read it too).
    - `konu` column: `<id> <topic title>` · `ONERI: <başlık>` · `AYIKLA (<aday1>, <aday2>)`.
    - Attachments (`ust` set) sit right under their parent, prefixed `└`.
    - Yönetim off → header `Yönetim → yazılmayacak, hazırlıkta kalır (<n>)` plus the
-     reason (erişim yok / üyeliğin yok / --yonetim-yok).
+     reason (erişim yok / üyeliğin yok / --yonetim-yok / köprüde yönetim yok).
+   - Köprü path → header `Ekip → köprü (<n>; kütüphaneci bir sonraki turda dosyalar)`.
+   - `ham` column: `var` · `var · kişisel veri` · `yok (<ham_neden>)`.
    - With batch recipients: `Alıcılar (tüm öğeler): <adlar> · haber: <hemen | günlük>`, then
-     `Bildirim: <satir>` from `TFB bildirim-plani [--yonetim] --tip BILGI --kimden <alicilar>
+     (doğrudan) `Bildirim: <satir>` from `TFB bildirim-plani [--yonetim] --tip BILGI --kimden <alicilar>
      --yazar <kisi> [--haber hemen] --adet <number of items of that area>` (one line per
-     area that has items; read-only).
+     area that has items; read-only); (köprü) `Bildirim: kütüphaneci dosyalayınca`.
    - Extra lines only when relevant: `İstekler: <no> <TIP> → <kişi1, kişi2> (<son_tarih|—>) · …`,
      `Yerine geçme: <no> → <onceki_surum no>`, `Doğrulayan boş: <no>, … (c-level'a giden
      karar/analiz)`, `Notlar: <no> <not>` (talimat benzeri metin, düşük güvenli konu …).
@@ -181,7 +191,8 @@ before step 4 (subagents read it too).
      "Silindi: <D>".
 
 6. **On Onayla — per area**, ekip first, then yönetim if on; skip an area with no
-   items. Work sequentially (ids come from the files on disk).
+   items. Work sequentially (ids come from the files on disk). On the köprü path follow
+   6K instead and skip 6.1–6.6.
    1. **Ids and defaults.** For each distinct `tur` of the area:
       `TFB kb [--yonetim] taslak --tur <tur> --kisi <kisi> --kanal claude-code --json`
       (no `--baslik`: the title goes into the file). All return the same next id
@@ -204,6 +215,7 @@ before step 4 (subagents read it too).
       | `gecersiz_kildigi` | `[<id of onceki_surum>]` if that item is written in this area in this run, else `[]` |
       | `ham` | Step 6.2 `yol`, or `null` |
       | `ham_notu` | `null` with a raw file; else `"<ham_neden>; orijinal gönderende · sha256:<first 12 of manifest sha256>"` |
+      | `kisisel_veri` | `var` on its own line right after `ham_notu` when `oge.json` `kisisel_veri` is true; else leave the field out |
       | others (`alan`, `paket`, `gecerlilik_sonu`, `durum`, `yerine_gelen`, `yazar`, `dogrulayan`, `kanit`, `kaynak_kanal`, `guven`) | taslak defaults (`guven: kullanici-onayli`) |
 
       YAML: double-quote `baslik`, `tldr`, `ham_notu` and any value with `: ` or `#`;
@@ -215,13 +227,27 @@ before step 4 (subagents read it too).
       → tell the user which files wait in the cache and stop (as `/paylas` step 10.3).
    6. `TFB kaydet [--yonetim] --mesaj 'toplu-paylas: <n> girdi (<kisi>)' <every girdi yol> <every new ham yol> [ham/DEFTER.tsv when any ham-ekle returned "yeni"]`.
 
+   6K. **Köprü path** (ekip items only, in `no` order). For each item Write
+   `<D>/<klasor>/taslak.json` (contract §5 of the köprü, every key) from `oge.json`:
+   `tur`, `baslik`, `tldr`, `konu_onerisi` (= `konu`), `konu_kaynagi: "claude"`,
+   `aday_konular`, `istek` (with batch recipients as in 6.3; `kimden` always a list),
+   `haber` (`"hemen"` when there is an `istek` with recipients, else `null`),
+   `kisisel_veri`, `birim`, `proje`, `hedef_kitle`, `belge_tarihi`, `uretim`,
+   `baglantilar` (the four list keys), `gecersiz_kildigi: []`, `gizli: false`,
+   `gizli_link: null`, `notlar` (≤5). Then
+   `TFB gonder --taslak '<D>/<klasor>/taslak.json' --metin '<D>/<klasor>/govde.md' [--ek '<D>/<klasor>/kaynak.<uz>' only when ham is true]`
+   (timeout 600000 ms) and keep its `kod` and `satir`. Exit 2 on one item → note it in
+   the reply (`<no>: <message>`) and go on with the next; that item's staging stays.
+
 7. **Clean up** (the staging folders hold full-text copies of every document), after
    every area's `kaydet` succeeded. Every item written, dropped or "girmez" (no yönetim
    item left in staging) → `TFB temizle <D> [<D>-yonetim]`. Yönetim items still waiting
    in staging (yönetim off) → keep `<D>` and delete only `<D>-yonetim` if it exists. An
    area that failed keeps its staging.
 
-8. **Reply.** Per written area:
+8. **Reply.** Köprü path: `Köprüden gönderildi: <n> öğe (kütüphaneci <dosyalama> turunda
+   dosyalar)` and one line per item `- <no> · <kod> · <baslik>`, then "Geri almak için:
+   /paylas geri-al <kod>". Doğrudan path, per written area:
 
    ```
    Kaydedildi: <n> girdi → <tf-bilgi | tf-bilgi-yonetim>

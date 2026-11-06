@@ -62,10 +62,10 @@ karar çıkmazsa ne olur. C-level'a gidiyorsa `dogrulayan` sorulur.
 5. Bağlantılar: Jira, PR, ham dosya (ek yok).
 6. Alındı: "Aldığını `/bilgi alindi <id>` ile ya da tek satırla bildir." Birden çok
    alıcıda alındı kişi başınadır: istek, her alıcı alındı deyince kapanır. Depoya yazma
-   yetkisi olmayan alıcı aldığını Slack'teki TF Bilgi botuna "aldım <id>" yazarak
-   bildirir; bot yanıt vermezse “alındı <id>”yi deponun `yazanlar` listesindekilerden
-   birine yazar, o `/bilgi alindi <id> --kisi <alıcı>` ile onun adına kaydeder (onay
-   dosyasında `kaydeden`).
+   yetkisi olmayan alıcı aldığını köprü anahtarıyla yine `/bilgi alindi <id>` diyerek
+   bildirir (kütüphaneci kaydeder); anahtarı yoksa Slack'teki TF Bilgi botuna "aldım <id>"
+   yazar ya da “alındı <id>”yi deponun `yazanlar` listesindekilerden birine yazar, o
+   `/bilgi alindi <id> --kisi <alıcı>` ile onun adına kaydeder (onay dosyasında `kaydeden`).
 
 Alt şablonu kitleye göre seç: depoda `sablonlar/devir-cs-degisiklik-brifi.md` ve
 `sablonlar/devir-hesap-devri.md` olarak durur; `kb taslak --tur devir --sablon
@@ -89,7 +89,8 @@ Adım adım SOP gerekiyorsa ayrı bir `nasil-yapilir` girdisi olur (numaralı ad
 - Müşteri ve paket
 - Söz verilenler (tarihli)
 - Beklentiler ve hassasiyetler
-- Kişiler: **yalnız rol** (ad-soyad, telefon, e-posta yazılmaz — KVKK)
+- Kişiler: tercihen rolle; ad, telefon ya da e-posta gerekiyorsa yazılır ve girdi
+  `kisisel_veri: var` olur (kişisel veri engellenmez, maskelenmez)
 - Kırmızı bayraklar
 - İlk CS temas tarihi
 - CRM kaydı bağlantısı
@@ -102,7 +103,7 @@ Tablo (SKILL.md "PR list mode") + **Nasıl doğrulanır** + **Bilinen tuzaklar**
 
 Belge okunmaz, depoya girmez; Drive'da yalnız alıcılarla paylaşılır. Gövde, `tldr`,
 `ham` ve `ham_notu` `kb taslak --gizli`'nin bastığı sabit metindir ve elle değişmez
-(`kb dogrula` birebir denetler). Burada yalnız tür seçimi geçerlidir ve yalnız
+(`kb dogrula` birebir denetler; köprü yolunda bu sabit girdiyi kütüphaneci yazar). Burada yalnız tür seçimi geçerlidir ve yalnız
 kullanıcının kendi sözlerinden yapılır, belgeden değil:
 
 | Kullanıcı ne diyor | `tur` | `--istek-tip` |

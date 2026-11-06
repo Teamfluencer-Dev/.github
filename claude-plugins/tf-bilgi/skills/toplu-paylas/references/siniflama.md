@@ -76,18 +76,22 @@ karıştırma, asla yeni kimlik uydurma.
 
 ## Ham dosya
 
-`ham: true` yalnız dördü birlikteyse:
+`ham: true` yalnız üçü birlikteyse:
 
-1. manifest `tara.cikis` 0 (bulgu yok, taranabildi);
+1. manifest `tara.cikis` 5 değil (taranabildi) ve `tara.kategoriler` içinde `sir` yok
+   (sır: şifre, anahtar, token, bağlantı dizesi, özel anahtar);
 2. `buyuk` false;
-3. metinde influencer kimliği yok (ad + hesap + iletişim birlikte; tek tük marka ya
-   da kamu hesabı adı kimlik sayılmaz);
-4. açık güvenlik ayrıntısı yok: IP adresi, sunucu adı ile erişim bilgisi, açık
+3. açık güvenlik ayrıntısı yok: IP adresi, sunucu adı ile erişim bilgisi, açık
    zafiyet ya da ihlal ayrıntısı, parola, anahtar, bağlantı dizesi.
 
-Değilse `ham: false` ve `ham_neden` kısa: `"tarama bulgusu: <adlar>"`,
-`"influencer kimliği"`, `"güvenlik ayrıntısı"`, `"büyük dosya"`, `"taranamadı"`.
+Değilse `ham: false` ve `ham_neden` kısa: `"sır bulgusu: <adlar>"`,
+`"güvenlik ayrıntısı"`, `"büyük dosya"`, `"taranamadı"`.
 Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
+
+**Kişisel veri engellemez** (6 Kas kararı): `tara.kategoriler` içinde `kisisel` varsa
+(telefon, e-posta, TCKN, IBAN) ya da metinde influencer kimliği, adres gibi kişisel veri
+görürsen ham dosya yine alınır (yukarıdaki üç koşul tutuyorsa) ve `oge.json`'da
+`kisisel_veri: true` olur; girdiye `kisisel_veri: var` düşer. Kişisel veri maskelenmez.
 
 ## Gövde (`govde.md`)
 
@@ -101,10 +105,11 @@ Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
 - Her rakamın yanında kaynağı ve tarihi: "(<belge adı>, <belge tarihi>)". Belgede
   olmayan rakam, kişi, tarih yazılmaz; emin değilsen `[doğrulanmalı]`.
 - Ekte (`ust` dolu) BLUF'tan sonra: "Bu belge «<üst öğenin başlığı>» belgesinin ekidir."
-- **Yazılmaz:** telefon, kişisel e-posta, TCKN, IBAN, ev adresi, influencer kimliği,
-  sağlık/maaş, sır (anahtar, parola, bağlantı dizesi), IP ve sunucu erişim bilgisi.
-  Dış kişiler rolüyle yazılır ("marka yetkilisi"). Bulgu yerini gerekiyorsa
-  `[maskelendi]` ile belirt; değeri asla tekrarlama.
+- **Yazılmaz:** sır (anahtar, parola, token, bağlantı dizesi), IP ve sunucu erişim
+  bilgisi, sağlık/maaş. Sırrın yeri gerekiyorsa `[maskelendi]` ile belirt; değeri asla
+  tekrarlama. Kişisel veri (telefon, e-posta, ad, influencer hesabı) gövdeye gerektiği
+  kadar girebilir, maskelenmez; o zaman `kisisel_veri: true`. Özet yazdığın için çoğu
+  zaman gerekmez: dış kişileri rolüyle yazmak ("marka yetkilisi") yine iyi bir alışkanlıktır.
 - Ek, görsel ya da HTML yok; yalnız metin, bağlantı ve kimlikler.
 
 ## `oge.json`
@@ -129,7 +134,8 @@ Varlıklar (görsel, veri dosyası) hiçbir zaman alınmaz.
 | `ham`, `ham_neden` | "Ham dosya" bölümü |
 | `onceki_surum` | `null` ya da bu çalıştırmadaki öğe `no`'su |
 | `okuma_suresi_dk` | Gövde kelimesi / 200, yukarı yuvarlanır (en az 1) |
-| `tara_temiz` | Aşağıdaki iki tarama da çıkış 0 ise `true` |
+| `kisisel_veri` | Belgede ya da gövdede kişisel veri varsa `true` ("Ham dosya" bölümü), yoksa `false` |
+| `tara_temiz` | Aşağıdaki iki taramada sır bulgusu yoksa ve çıkış 0 ya da yalnız kişisel bulgulu 3 ise `true` |
 | `notlar` | Kısa Türkçe notlar listesi (talimat benzeri metin, istek kime belli değil …) |
 
 `girmez` öğede yalnız `no`, `alan`, `girmez_nedeni`, `baslik` (manifest `ad`'ından
@@ -159,6 +165,7 @@ kısa) ve `notlar` dolu olur; gövde yazılmaz.
   "uretim": "claude",
   "ham": true,
   "ham_neden": null,
+  "kisisel_veri": false,
   "onceki_surum": null,
   "okuma_suresi_dk": 3,
   "tara_temiz": true,
@@ -171,6 +178,8 @@ kısa) ve `notlar` dolu olur; gövde yazılmaz.
 1. `govde.md` ve `oge.json`'u Write aracıyla öğe klasörüne yaz (kabuk heredoc'u
    kullanma). Başka dosyaya ve başka klasöre yazma.
 2. `TFB kb [--yonetim] tara '<D>/<klasor>/govde.md' --json` ve aynısını `oge.json`
-   için çalıştır (`--yonetim` öğe yönetimse). Çıkış 3 → bulguyu metinden çıkar ya da
-   `[maskelendi]` yaz, yeniden yaz, yeniden tara. İkisi de 0 olunca `tara_temiz: true`.
+   için çalıştır (`--yonetim` öğe yönetimse). Çıkış 3 ve bulgu `tur: "sir"` → sırrı
+   metinden çıkar ya da `[maskelendi]` yaz, yeniden yaz, yeniden tara. Yalnız
+   `tur: "kisisel"` bulgusu → metne dokunma, `kisisel_veri: true`. Sır bulgusu kalmayınca
+   `tara_temiz: true`.
 3. Bitince öğe başına tek satır döndür: `no · alan · tur · baslik · konu · ham · tara_temiz`.
