@@ -63,7 +63,7 @@ is enough).
    `<not>`: first keep only letters (Turkish included), digits, spaces and `.,:-#`, then
    put it in single quotes.
 
-4. **Render** in Turkish, short, no emoji. One line per entry:
+4. **Render** in Turkish, short, no emoji (the one exception is the `🔒 gizli` marker below). One line per entry:
 
    `- [<id>](<baglanti_koku><yol>) · <tur> · <yazar> · <tldr> · ~<okuma_suresi_dk> dk`
 

@@ -752,6 +752,55 @@ class KaydetTest(Base):
                          "B-20261105-ayse-01: Başlık 'tırnak' $(touch PWNED)")
         self.assertFalse((self.kok() / "PWNED").exists())
 
+    def gizli_yaz(self):
+        metin = girdi_metni().replace("tarih: 2026-11-05\n---", "gizli: true\nham: null\ntarih: 2026-11-05\n---")
+        return self.ok("yaz", stdin=metin)["yol"]
+
+    def ham_ve_defter(self, girdi="B-20261105-ayse-01", ad="gizli"):
+        ham = f"ham/2026/11/3f9a2c1e-{ad}.txt"
+        (self.kok() / ham).parent.mkdir(parents=True, exist_ok=True)
+        (self.kok() / ham).write_text("gizli içerik\n")
+        with open(self.kok() / tf_bilgi.DEFTER, "a") as defter:
+            defter.write("3f9a2c1e" + ad.encode().hex()[:8].ljust(56, "0") + f"\t{ham}\t{girdi}\t2026-11-05\n")
+        return ham
+
+    def test_gizli_girdiye_yalniz_defter_satiri_de_eklenmez(self):
+        entry = self.gizli_yaz()
+        self.ham_ve_defter()
+        out = self.stop("kaydet", "--mesaj", "m", entry, tf_bilgi.DEFTER)  # ham dosyası yok, yalnız defter satırı
+        self.assertIn("gizli girdiye (B-20261105-ayse-01) ham dosya satırı eklenemez", out)
+        self.assertFalse(self.published(entry))
+
+    def test_gizli_girdiye_sonradan_ham_eklenmez(self):
+        entry = self.gizli_yaz()
+        self.assertTrue(self.ok("kaydet", "--mesaj", "m", entry)["gonderildi"])
+        ham = self.ham_ve_defter()
+        out = self.stop("kaydet", "--mesaj", "m", ham, tf_bilgi.DEFTER)  # ikinci çağrı: girdi artık yayımlanmış
+        self.assertIn("gizli girdiye (B-20261105-ayse-01) ham dosya satırı eklenemez", out)
+        out = self.stop("kaydet", "--mesaj", "m", ham)  # defter verilmese de yerel defterdeki satır bağlar
+        self.assertIn("defterde gizli bir girdiye bağlı", out)
+        self.assertFalse(self.published(ham))
+        (self.kok() / entry).unlink()  # yalnız origin/main'de: yine gizli sayılır
+        self.assertTrue(tf_bilgi.gizli_kimlik_mi(self.kok(), "B-20261105-ayse-01"))
+        git(self.kok(), "checkout", "--", entry)
+        self.assertFalse(tf_bilgi.gizli_kimlik_mi(self.kok(), "B-20261029-ayse-01"))  # gizli olmayan yayımlanmış girdi
+        self.assertFalse(tf_bilgi.gizli_kimlik_mi(self.kok(), "-"))
+
+    def test_gizli_olmayan_girdinin_ham_dosyasi_gecer(self):
+        entry = self.ok("yaz", stdin=girdi_metni("B-20261105-ayse-02"))["yol"]
+        ham = self.ham_ve_defter("B-20261105-ayse-02", "acik")
+        self.assertTrue(self.ok("kaydet", "--mesaj", "m", entry, ham, tf_bilgi.DEFTER)["gonderildi"])
+
+    def test_gizli_girdi_mi_kenarlari(self):
+        fm = lambda *satir: "---\nid: B-20261105-ayse-01\n" + "".join(s + "\n" for s in satir) + "---\ngövde\n"  # noqa: E731
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("gizli: true")))
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("gizli: True # yorum")))
+        self.assertTrue(tf_bilgi.gizli_girdi_mi("\ufeff" + fm("gizli: true")))  # BOM'lu dosya
+        self.assertTrue(tf_bilgi.gizli_girdi_mi(fm("istek:", "  gizli: true")))  # iç içe anahtar: güvenli tarafta kalır
+        self.assertFalse(tf_bilgi.gizli_girdi_mi(fm("gizli: false")))
+        self.assertFalse(tf_bilgi.gizli_girdi_mi(fm('gizli: "true"')))  # tırnaklı değer: kb.py dogrula zaten HATA verir
+        self.assertFalse(tf_bilgi.gizli_girdi_mi("gizli: true\n"))  # frontmatter yok
+
     def test_gizli_girdiyle_ham_kaydedilmez(self):
         metin = girdi_metni().replace("tarih: 2026-11-05\n---", "gizli: true\nham: null\ntarih: 2026-11-05\n---")
         entry = self.ok("yaz", stdin=metin)["yol"]
@@ -1236,7 +1285,19 @@ class GizliAlicilarTest(Base):
         self.assertEqual([a["alan_uyesi"] for a in r["alicilar"]], [True, False])
         self.assertIn("Mert yonetim alanının üyesi değil", r["notlar"][0])
         self.assertIn("kimse", self.stop("gizli-alicilar", "--kimden", "ayse,kimse"))
-        self.assertEqual(self.gh_calls(), [c for c in self.gh_calls() if c[:2] != ["issue", "comment"]])  # yazmaz
+        self.assertIn("(boş)", self.stop("gizli-alicilar", "--kimden", ","))
+        self.assertFalse([c for c in self.gh_calls() if c[:2] == ["issue", "comment"]])  # yorum yazmaz
+        self.assertEqual(git(self.kok(), "status", "--porcelain"), "")  # klona yazmaz
+
+    def test_kisi_degeri_null_ve_hazirla_once(self):
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"]["bos"] = None
+        self.seed_commit("ekip", "kisiler.json", json.dumps(kisiler, ensure_ascii=False))
+        self.ok("hazirla")
+        self.assertIn("kisiler.json'da yok: bos", self.stop("gizli-alicilar", "--kimden", "bos"))  # null kişi değil
+        self.assertEqual(self.ok("gizli-alicilar", "--kimden", "ayse")["alicilar"][0]["eposta"], "ayse@ornek.test")
+        shutil.rmtree(self.kok())
+        self.assertIn("önce `tf_bilgi.py hazirla", self.stop("gizli-alicilar", "--kimden", "ayse"))
 
 
 class CliTest(Base):

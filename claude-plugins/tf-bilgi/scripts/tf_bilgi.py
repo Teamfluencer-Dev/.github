@@ -7,7 +7,9 @@ This script keeps a local cache clone of each and drives the repo's own
 validation, commit/push). The plugin depends only on the kb.py commands, flags
 and JSON shapes of the TF Bilgi contract (sections 9 and 11), never on its code.
 kb.py runs on every user's machine, so the plugin runs only the kb.py whose
-sha256 is in KB_SHA256 (reviewed here), in isolated mode (python3 -I).
+sha256 is in KB_SHA256, in isolated mode (python3 -I). The pin is reviewed here;
+the pinned kb.py itself is reviewed in a pull request on the KB repo, and the
+plugin PR that adds a hash links that KB PR and its head SHA (KB CLAUDE.md §12).
 
   hazirla [--yonetim] [--yazma]  Clone or update the cache clone, resolve the
                                  person, print JSON (kok, alan, kisi, kb, uzak,
@@ -36,8 +38,9 @@ sha256 is in KB_SHA256 (reviewed here), in isolated mode (python3 -I).
   kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL...
                                  Contract section 10 guard (only new girdiler/,
                                  ham/, onaylar/ files and an append-only
-                                 ham/DEFTER.tsv; no ham/ path next to a gizli
-                                 entry), then kb.py kaydet; prints links.
+                                 ham/DEFTER.tsv; no raw file or ledger row for a
+                                 gizli entry, also across calls), then kb.py
+                                 kaydet; prints links.
                                  F: first line of a file under <cache>/gecici/.
   prler [REF...] [--repo R]...   Read-only PR rows for a pr-listesi entry:
                                  claude-review state, merge state, stacking.
@@ -103,10 +106,12 @@ KB_IZINLI = ("taslak", "yeni-id", "eslestir", "tara", "dogrula", "ham-ekle", "so
              "izin-ekle", "toplu-hazirla")
 KENDI_ADINA = ("alindi", "izin-ekle")  # --kisi çözülen kişi olmalı (alindi: yazanlar başkası adına da, kaydeden ile)
 # Sözleşme: eklenti yalnız bu sha256'lardan birine sahip araclar/kb.py'yi çalıştırır (ekip ve yönetim kopyası bayt bayt
-# aynı). kb.py değişince yeni hash buraya eklenir (eklenti PR'ı + /pr-review, sürüm artar), sonra KB depolarına kb.py
-# gelir; geçişte eski ve yeni hash birlikte durur, eski hash bir sonraki sürümde çıkar (KB CLAUDE.md §12).
+# aynı). kb.py değişikliği KB deposunda PR ile incelenir; yeni hash'i buraya ekleyen eklenti PR'ı o KB PR'ını ve head
+# SHA'sını gösterir (/pr-review, sürüm artar). İki PR aynı gün merge edilir: KB PR'ı eklenti merge'ünün hemen ardından;
+# eski eklenti o andan sonra durur (kapalı kalır). Geçişte eski ve yeni hash birlikte durur, eski hash bir sonraki sürümde
+# çıkar (KB CLAUDE.md §12).
 # 0.4.0 geçişi: ilki KB depolarında bugün duran kb.py (0.3.1'in sabiti), ikincisi gizli paylaşımlı kb.py (taslak --gizli,
-# §4.6). Bu sürüm merge edilip kullanıcılar güncelleyince yeni kb.py iki KB deposuna gönderilir; ilki sonraki sürümde çıkar.
+# §4.6): Teamfluencer-Dev/tf-bilgi#2, head 6392d32a393e073dcf7f17d77c3ef9ae46ea93a6.
 KB_SHA256 = (
     "76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23",  # 0.3.1: KB depolarındaki kb.py
     "107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785",  # 0.4.0: gizli girdi (taslak --gizli)
@@ -344,7 +349,8 @@ def kisileri_oku(kok):
     except (FileNotFoundError, ValueError):
         return {}
     kisiler = data.get("kisiler") if isinstance(data, dict) else None
-    return kisiler if isinstance(kisiler, dict) else {}
+    # kb.py gibi: nesne olmayan kayıt (ör. null) kişi sayılmaz
+    return {k: v for k, v in kisiler.items() if isinstance(v, dict)} if isinstance(kisiler, dict) else {}
 
 
 def kisi_bul(kok, notlar):
@@ -872,12 +878,54 @@ def defter_yalniz_ekleme_mi(kok, yol=DEFTER):
     return proc.returncode != 0 or yeni.startswith(proc.stdout)
 
 
-def izinler_yeni_satirlari(kok):
-    """origin'dekine göre IZINLER.tsv'ye eklenen satırlar (başlık hariç)."""
-    yeni = (kok / IZINLER).read_text(encoding="utf-8").splitlines()
-    proc = git(kok, "show", f"origin/{DAL}:{IZINLER}", check=False)
+def yeni_satirlar(kok, yol):
+    """origin'dekine göre bir yalnız-ekleme defterine (DEFTER.tsv, IZINLER.tsv) eklenen satırlar (başlık hariç)."""
+    yeni = (kok / yol).read_text(encoding="utf-8").splitlines()
+    proc = git(kok, "show", f"origin/{DAL}:{yol}", check=False)
     eski = proc.stdout.splitlines() if proc.returncode == 0 else yeni[:1]
     return yeni[len(eski):]
+
+
+def izinler_yeni_satirlari(kok):
+    """origin'dekine göre IZINLER.tsv'ye eklenen satırlar (başlık hariç)."""
+    return yeni_satirlar(kok, IZINLER)
+
+
+def gizli_kimlik_mi(kok, girdi_id):
+    """Bu kimlikteki girdi gizli mi: klonda (commit'lenmemiş dahil) ya da origin/main'de `gizli: true`."""
+    m = GIRDI_ID_RE.match(girdi_id or "")
+    if not m:
+        return False
+    yol = f"girdiler/{m.group(2)}/{m.group(3)}/{girdi_id}.md"
+    if (kok / yol).is_file() and gizli_girdi_mi((kok / yol).read_text(encoding="utf-8")):
+        return True
+    proc = git(kok, "show", f"origin/{DAL}:{yol}", check=False)
+    return proc.returncode == 0 and gizli_girdi_mi(proc.stdout)
+
+
+def gizli_ham_sorunlari(kok, yollar):
+    """Gizli girdiye ham dosya bağlanamaz (belge hiçbir depoya girmez), ayrı kaydet çağrılarında da: aynı çağrıdaki gizli
+    girdi, DEFTER.tsv'ye eklenen satırın `girdi` sütunu ve verilen ham/ yolunun yerel defterdeki satırı denetlenir."""
+    sorunlar = []
+    gizliler = [y for y in yollar if y.startswith("girdiler/") and (kok / y).is_file()
+                and gizli_girdi_mi((kok / y).read_text(encoding="utf-8"))]
+    hamlar = [y for y in yollar if y.startswith("ham/") and y not in (DEFTER, IZINLER)]
+    if gizliler and hamlar:
+        sorunlar.append(f"gizli girdiyle ({', '.join(Path(y).stem for y in gizliler)}) ham/ dosyası kaydedilmez: "
+                        f"belge hiçbir depoya girmez ({', '.join(hamlar[:3])})")
+    defter = kok / DEFTER
+    satirlar = [s.split("\t") for s in defter.read_text(encoding="utf-8").splitlines()[1:]] if defter.is_file() else []
+    if DEFTER in yollar and defter.is_file():
+        yeni = sorted({p[2] for p in (s.split("\t") for s in yeni_satirlar(kok, DEFTER)) if len(p) >= 3
+                       and gizli_kimlik_mi(kok, p[2])})
+        if yeni:
+            sorunlar.append(f"{DEFTER}: gizli girdiye ({', '.join(yeni)}) ham dosya satırı eklenemez: belge hiçbir "
+                            "depoya girmez")
+    defter_girdi = {p[1]: p[2] for p in satirlar if len(p) >= 3}
+    bagli = sorted({y for y in hamlar if gizli_kimlik_mi(kok, defter_girdi.get(y))})
+    if bagli:
+        sorunlar.append(f"{', '.join(bagli)}: defterde gizli bir girdiye bağlı; gizli girdinin ham dosyası kaydedilmez")
+    return sorunlar
 
 
 def onay_kaydeden(metin):
@@ -970,12 +1018,7 @@ def kaydet(argv):
             sorun = onay_sorunu(kok, ayar, yol)
             if sorun:
                 sorunlar.append(sorun)
-    gizliler = [y for y in yollar if y.startswith("girdiler/") and (kok / y).is_file()
-                and gizli_girdi_mi((kok / y).read_text(encoding="utf-8"))]
-    hamlar = [y for y in yollar if y.startswith("ham/")]
-    if gizliler and hamlar:
-        sorunlar.append(f"gizli girdiyle ({', '.join(Path(y).stem for y in gizliler)}) ham/ dosyası kaydedilmez: "
-                        f"belge hiçbir depoya girmez ({', '.join(hamlar[:3])})")
+    sorunlar += gizli_ham_sorunlari(kok, yollar)
     hazir = [y for y in git(kok, "diff", "--cached", "--name-only").stdout.splitlines() if y and y not in yollar]
     if hazir:
         sorunlar.append(f"başka dosyalar commit için hazırlanmış: {', '.join(hazir[:5])} — önce: "
@@ -1358,7 +1401,7 @@ def gizli_alicilar(argv):
         raise Stop(f"Kişi anahtarı kisiler.json'da yok: {', '.join(bilinmeyen) or '(boş)'}")
     satirlar, parcalar, notlar = [], [], []
     for k in anahtarlar:
-        bilgi, ad = kisiler[k] or {}, ilk_ad(kisiler, k)
+        bilgi, ad = kisiler[k], ilk_ad(kisiler, k)
         eposta = str(bilgi.get("eposta") or "").strip() or None
         uye = alan in (bilgi.get("alanlar") or [])
         satirlar.append({"kisi": k, "ad": ad, "eposta": eposta, "alan_uyesi": uye})
