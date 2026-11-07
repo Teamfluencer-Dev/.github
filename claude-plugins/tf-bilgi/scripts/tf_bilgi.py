@@ -2752,11 +2752,27 @@ GECMIS_AZAMI = 200        # yerel gönderim geçmişi (geri-al kodun hangi depod
 TR_SAAT = datetime.timezone(datetime.timedelta(hours=3))     # İstanbul (2016'dan beri yaz saati yok)
 TUR_SAATLERI = ((9, 5), (11, 5), (13, 5), (15, 5), (17, 5))  # kütüphaneci `dosyala` turları, hafta içi (köprüyle aynı)
 KAYIT_ADI_RE = re.compile(r"^\d{8}-\d{6}-([a-z][a-z0-9]*)-([a-z0-9]{6})$")
-HIZLI_YONETIM_KOPRU = ("Yönetim belgesini Slack'te TF Bilgi botuna 'yönetim' yazarak gönder; köprü yalnız ekip alanında "
-                       "çalışır.")
-HIZLI_YOL_YOK = ("Depoya yazma yetkin ve köprü anahtarın yok. En hızlısı: dosyayı Slack'te TF Bilgi botuna DM at. "
-                 "(Anahtar için Enes'e yaz, sonra /bilgi kur.)")
+# 0.8.0 (Enes, 7 Kas: "Claude Code'u olan herkes /paylas kullanabilsin"): bilgi deposuna yazamayan ekip üyesi kaydını
+# ayrı gelen kutusu deposuna (yalnız bu depoya yazma yetkisi; sır yok, iş akışı yok) yazar; tf-bilgi'nin `gelen-depo`
+# iş akışı kaydı olduğu gibi tf-bilgi `00-gelen/`'e aktarır (15 dk'da bir), kütüphaneci her hızlı kayıt gibi işler.
+GELEN_DEPOSU = f"{ORG}/tf-bilgi-gelen"
+GELEN_TASINDI = "tasindi"  # gelen deposunda aktarılan kayıtların klasörü (aktarım taşır, silmez)
+GELEN_AKTARIM_DK = 15      # gelen-depo.yml en geç bu kadar dakikada bir aktarır (hafta içi 08:00–19:45)
+HIZLI_YONETIM_KOPRU = ("Yönetim deposuna yazma yetkin yok: Claude Code'dan yönetime yalnız Enes ve Ilgım gönderir. "
+                       "Belgeyi Slack'te TF Bilgi botuna 'yönetim için' yazarak gönder; yalnız yönetim görür.")
+HIZLI_YOL_YOK = ("Claude Code'dan paylaşmak için GitHub hesabının TF Bilgi gelen kutusuna (Teamfluencer-Dev/"
+                 "tf-bilgi-gelen) yazma yetkisi olmalı: Enes'e yaz. O zamana kadar en hızlısı: dosyayı Slack'te TF Bilgi "
+                 "botuna DM at.")
 GH_OTURUM_YOK = "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas."
+GH_YOK = ("GitHub CLI (gh) kurulu değil: `brew install gh` ve `gh auth login` yap, sonra tekrar /paylas. O zamana kadar "
+          "dosyayı Slack'te TF Bilgi botuna DM at.")
+# Claude artifact bağlantısını kütüphaneci açamaz (artifact sahibinin oturumu gerekir): /paylas onu Artifact aracıyla
+# indirip ek olarak gönderir; eksiz bir artifact bağlantısı gelirse hizli durur ve ne yapılacağını söyler.
+ARTIFACT_LINK_RE = re.compile(r"https?://(?:www\.)?(?:claude\.ai/(?:code/)?(?:public/)?artifacts?/|claude\.site/artifacts/)",
+                              re.IGNORECASE)
+ARTIFACT_EKSIZ = ("Notunda bir Claude artifact bağlantısı var ama ek yok: kütüphaneci artifact'ı açamaz. /paylas'ı "
+                  "bağlantıyla yeniden dene (Claude artifact'ı indirip ekler) ya da artifact'ı HTML/PDF indirip dosya "
+                  "yolunu ver. Hiçbir şey gönderilmedi.")
 BASKASININ_KODU = "Bu kod senin paylaşımın değil."
 # --otomatik (skill dosyayı kendisi seçtiyse): yalnız belge benzeri dosyalar; kod, ayar, anahtar, uzantısız ve nokta ile
 # başlayan dosyalar (ör. .env) reddedilir. Kullanıcının açıkça verdiği yol her türde çalışır.
@@ -3061,6 +3077,9 @@ def geri_al_yazan(kod):
     adaylar = [(alan, slug) for alan, slug in ((a, hizli_slug(a)) for a in ("ekip", "yonetim"))
                if slug and hizli_yetki(login, slug)[0]]
     if not adaylar:
+        gslug = gelen_slug()
+        if gslug and zorla != "dogrudan" and gecmis.get("yol") != "writer" and hizli_yetki(login, gslug)[0]:
+            return geri_al_gelen(kod, login, gslug)
         return None
     adaylar.sort(key=lambda a: a[0] != gecmis.get("alan"))
     kimlik, notlar, dosyalanmis = kod[2:], [], None
@@ -3095,11 +3114,41 @@ def geri_al_yazan(kod):
             "satir": "Geri alma isteği kaydedildi; kütüphaneci sonraki turda girdiyi iptal eder.", "notlar": notlar}
 
 
+def geri_al_gelen(kod, login, gslug):
+    """Gelen deposuna yazanın kaydı: gelen deposunun 00-gelen'inde duruyorsa (henüz aktarılmadı) tek commit'le kaldırır;
+    aktarıldıysa (tasindi/) ya da bulunamazsa gelen deposuna geri-al kaydı yazar: aktarılınca kütüphaneci işler (GOREV
+    2.G.0: dosyalanmadıysa ikisi de atlanır, dosyalandıysa girdi iptal olur; kod başkasınınsa atlanır)."""
+    kimlik, notlar = kod[2:], []
+    try:
+        kisi = hizli_kisi(hizli_slug("ekip"), login, notlar)
+        bulunan = kod_klasorleri(gslug, dal_basi(gslug)[1], kimlik, (GELEN, GELEN_TASINDI))
+        kendi = [k for k in bulunan if k["kisi"] == kisi]
+        if bulunan and not kendi:
+            raise Stop(BASKASININ_KODU)
+        if any(k["yer"] == GELEN for k in kendi) and gelen_sil(gslug, kisi, kimlik, kod):
+            return {"hedef": kod, "sonuc": "silindi", "kod": None, "alan": "ekip", "yol": "gelen",
+                    "satir": f"Geri alındı: {kod} TF Bilgi'ye aktarılmadan önce kaldırıldı.", "notlar": notlar}
+        yeni = geri_al_kaydi(gslug, "ekip", kisi, login, kod)
+    except GhHatasi as e:
+        raise Stop(f"Geri alınamadı: {e} Tekrar dene.")
+    return {"hedef": kod, "sonuc": "kaydedildi", "kod": yeni, "alan": "ekip", "yol": "gelen",
+            "satir": "Geri alma isteği kaydedildi; kütüphaneci sonraki turda işler (dosyalanmadıysa kayıt atlanır, "
+                     "dosyalandıysa girdi iptal olur).", "notlar": notlar}
+
+
 # --- hızlı yol: hizli alt komutu ---
 
 def belge_mi(ad):
     """--otomatik: belge benzeri dosya mı (OTOMATIK_UZANTILAR; nokta ile başlayan ad hiçbir zaman)."""
     return not ad.startswith(".") and Path(ad).suffix.lower() in OTOMATIK_UZANTILAR
+
+
+def gelen_slug():
+    """Gelen kutusu deposu (TF_BILGI_GELEN_DEPOSU ile ezilebilir) ya da None (ekip deposu GitHub'da değilse: yerel yol)."""
+    deger = os.environ.get("TF_BILGI_GELEN_DEPOSU", "").strip() or GELEN_DEPOSU
+    if not SLUG_RE.match(deger) or not hizli_slug("ekip"):
+        return None
+    return deger
 
 
 def hizli_slug(alan):
@@ -3112,8 +3161,9 @@ def hizli_slug(alan):
 
 
 def hizli_yol(alan):
-    """('writer', login, slug, önbellekten) ya da ('kopru', None, None, False); ikisi de yoksa durur. Yazan önce gelir
-    (anahtarı olan yazan da GitHub'a yazar); TF_BILGI_YOL=kopru|dogrudan zorlar."""
+    """('writer', login, slug, önbellekten), ('gelen', login, gelen deposu, önbellekten) ya da ('kopru', None, None,
+    False); hiçbiri yoksa durur. Sıra: depoya yazan → gelen kutusu deposuna yazan (yalnız ekip) → köprü anahtarı.
+    TF_BILGI_YOL=kopru|dogrudan zorlar."""
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
     if zorla not in ("", "kopru", "dogrudan"):
         raise Stop(f"TF_BILGI_YOL anlaşılmadı: {zorla!r} (kopru ya da dogrudan).")
@@ -3129,12 +3179,23 @@ def hizli_yol(alan):
                 push, onbellekten = hizli_yetki(login, slug, yenile=True)
             if push or (push is None and not anahtar_var):  # denetlenemedi ve başka yol yok: yazmayı dene
                 return "writer", login, slug, onbellekten
+            if alan == "yonetim":  # yönetime yalnız yönetim deposuna yazan gönderir (gelen deposu ve köprü ekip içindir)
+                raise Stop(HIZLI_YONETIM_KOPRU)
+            gslug = gelen_slug()
+            if gslug:
+                gpush, gonb = hizli_yetki(login, gslug)
+                if gpush is False and gonb and not anahtar_var:
+                    gpush, gonb = hizli_yetki(login, gslug, yenile=True)
+                if gpush:
+                    return "gelen", login, gslug, gonb
     if anahtar_var:
         if alan == "yonetim":
             raise Stop(HIZLI_YONETIM_KOPRU)
         return "kopru", None, None, False
     if zorla == "kopru":
         raise Stop(ANAHTAR_YOK + " (TF_BILGI_YOL=kopru)")
+    if zorla != "kopru" and slug and not which("gh"):
+        raise Stop(GH_YOK)
     raise Stop(HIZLI_YOL_YOK)
 
 
@@ -3178,12 +3239,13 @@ def hizli_taslagi(haber):
             "gizli_link": None, "notlar": []}
 
 
-def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar):
-    """Yazan: tek API commit'i → (kod, klasör, kayıttaki adlar)."""
+def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar, kisi_slug=None):
+    """Yazan: tek API commit'i → (kod, klasör, kayıttaki adlar). Gelen deposunda kişi ekip deposunun kisiler.json'undan
+    bulunur (kisi_slug; gelen deposunda kisiler.json yok)."""
     notlu = bool(not_metni.strip())
     adlar = (["govde.md"] if notlu else []) + [ad for ad, _, _ in dosyalar]
     try:
-        kisi = hizli_kisi(slug, login, notlar)
+        kisi = hizli_kisi(kisi_slug or slug, login, notlar)
         an, kimlik = an_tr(), yeni_kimlik()
         kod = f"G-{kimlik}"
         klasor = f"{GELEN}/{an:%Y%m%d-%H%M%S}-{kisi}-{kimlik}"
@@ -3265,11 +3327,15 @@ def hizli(argv):
     kaynaklar = ([("govde.md", not_metni.encode("utf-8"), "notun")] if notlu else []) + dosyalar
     anahtar_denetle(kaynaklar)
     boyut_denetle(kaynaklar, HIZLI_DOSYA_AZAMI, HIZLI_KAYIT_AZAMI)  # iki yolun da üst sınırı; ağdan önce
+    if not dosyalar and ARTIFACT_LINK_RE.search(not_metni):
+        raise Stop(ARTIFACT_EKSIZ)  # bağlantı tek başına gitseydi kütüphaneci açamaz, kayıt "açılamadı" diye dönerdi
     yol, login, slug, onbellekten = hizli_yol(alan)
     notlar = []
-    if yol == "writer":
-        kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar)
-        dosyalama = sonraki_tur(an_tr())
+    if yol in ("writer", "gelen"):
+        kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar,
+                                         kisi_slug=hizli_slug("ekip") if yol == "gelen" else None)
+        an = an_tr()
+        dosyalama = sonraki_tur(an + datetime.timedelta(minutes=GELEN_AKTARIM_DK) if yol == "gelen" else an)
     else:
         sinir = kopru_sinirlari()
         boyut_denetle(kaynaklar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])

@@ -146,7 +146,10 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
             print("gh: Not Found (HTTP 404)", file=sys.stderr)
             sys.exit(1)
         cik("FAKE_GH_REPO_CIKIS")
-        print(os.environ.get("FAKE_GH_PUSH", "true"))
+        push = os.environ.get("FAKE_GH_PUSH", "true")
+        if parca[2] == "tf-bilgi-gelen":  # gelen kutusu deposu (0.8.0): ayrı yetki
+            push = os.environ.get("FAKE_GH_PUSH_GELEN", push)
+        print(push)
         sys.exit(0)
     if parca[3] == "labels":
         if yontem == "POST":
@@ -277,6 +280,7 @@ class Base(unittest.TestCase):
         self.issues.write_text(json.dumps({"issues": [], "comments": {}, "labels": [], "next": 20}))
         os.environ["FAKE_GH_ISSUES"] = str(self.issues)
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
+                     "FAKE_GH_PUSH_GELEN", "TF_BILGI_GELEN_DEPOSU",
                      "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
                      "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
                      "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS", "TF_BILGI_YOL", "TF_BILGI_KOPRU_URL",
@@ -2940,8 +2944,7 @@ class HizliTest(Base):
             self.assertEqual(len(kopru.islemler("baslat")), 3)
             self.assertEqual(r["dosyalar"], ["x.pdf"])
             self.assertIn(" · x.pdf · ekip · ", r["satir"])
-            self.assertIn("Yönetim belgesini Slack'te TF Bilgi botuna 'yönetim' yazarak gönder; köprü yalnız ekip "
-                          "alanında çalışır.", self.stop("hizli", "--yonetim", stdin="yönetim için"))
+            self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", self.stop("hizli", "--yonetim", stdin="yönetim için"))
             with mock.patch.dict(tf_bilgi.KOPRU_SINIRLAR, {"dosya_azami_bayt": 4}):
                 self.assertIn("x.pdf çok büyük", self.stop("hizli", "--ek", self.ek("x.pdf", b"%PDF-1")))
         self.assertEqual(self.gh.cagrilar, [])  # GitHub'a gidilmedi
@@ -2960,8 +2963,9 @@ class HizliTest(Base):
         self.assertNotIn("hizli", normal)  # yalnız hızlı taslakta gider
 
     def test_ne_yazan_ne_kopru(self):
-        mesaj = ("Depoya yazma yetkin ve köprü anahtarın yok. En hızlısı: dosyayı Slack'te TF Bilgi botuna DM at. "
-                 "(Anahtar için Enes'e yaz, sonra /bilgi kur.)")
+        mesaj = ("Claude Code'dan paylaşmak için GitHub hesabının TF Bilgi gelen kutusuna (Teamfluencer-Dev/"
+                 "tf-bilgi-gelen) yazma yetkisi olmalı: Enes'e yaz. O zamana kadar en hızlısı: dosyayı Slack'te TF Bilgi "
+                 "botuna DM at.")
         os.environ["FAKE_GH_PUSH"] = "false"
         self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)
         self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)
@@ -2970,7 +2974,7 @@ class HizliTest(Base):
         self.assertEqual((code, out.strip()), (2, mesaj))
         os.environ["FAKE_GH_PUSH"] = "true"
         with mock.patch.object(tf_bilgi, "which", lambda ad: None if ad == "gh" else shutil.which(ad)):
-            self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)  # gh kurulu değil
+            self.assertIn("GitHub CLI (gh) kurulu değil", self.stop("hizli", stdin="not"))  # gh kurulu değil
         os.environ["TF_BILGI_YOL"] = "dogrudan"
         os.environ["FAKE_GH_PUSH"] = "false"
         self.anahtar_kur()
@@ -3183,7 +3187,73 @@ class HizliTest(Base):
         with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
             self.assertEqual(self.hizli(not_metni="ekip")["yol"], "kopru")  # ekipte köprü yine çalışır
         (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + anahtar + yönetim: köprü mesajı
-        self.assertIn("köprü yalnız ekip alanında", self.stop("hizli", "--yonetim", stdin="yönetim"))
+        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", self.stop("hizli", "--yonetim", stdin="yönetim"))
+
+    # --- 0.8.0: gelen kutusu deposu (bilgi deposuna yazamayan ekip üyesi) ---
+
+    GELEN = "Teamfluencer-Dev/tf-bilgi-gelen"
+
+    def gelen_kur(self):
+        self.gh.depo_kur(self.GELEN, {"00-gelen/.gitkeep": "", "README.md": "# gelen\n"})
+        os.environ.update({"FAKE_GH_PUSH": "false", "FAKE_GH_PUSH_GELEN": "true"})
+
+    def test_gelen_deposu_yazamayan_ekip_uyesi(self):
+        self.gelen_kur()
+        os.environ["TF_BILGI_SIMDI"] = "2026-11-05T12:55:00+03:00"  # yazan 13:05'e yetişirdi; gelen aktarımı +15 dk
+        r = self.hizli("--ek", self.ek("rapor.pdf", b"%PDF-1.4 x"), not_metni="Nil baksın, Cuma'ya kadar\n")
+        kod = r["kod"]
+        self.assertEqual((r["alan"], r["yol"], r["dosyalar"]), ("ekip", "gelen", ["govde.md", "rapor.pdf"]))
+        self.assertIn(" · ekip · kütüphaneci bugün 15:05 turunda dosyalar", r["satir"])
+        kayit = self.kayit(self.GELEN, kod)
+        self.assertEqual(sorted(kayit), ["govde.md", "meta.json", "rapor.pdf"])
+        meta = json.loads(kayit["meta.json"])
+        self.assertEqual(list(meta), META_ANAHTARLARI)
+        self.assertEqual((meta["gonderen"], meta["gonderen_ham"], meta["alan"], meta["kaynak_kanal"]),
+                         ("ayse", "github:ayse-gh", "ekip", "claude-code"))  # kişi ekip deposunun kisiler.json'undan
+        self.assertEqual(self.kayit(self.EKIP, kod), {})  # bilgi deposuna hiçbir şey yazılmadı
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
+        self.assertFalse([c for c in self.gh.cagrilar if c[0] != "GET" and self.EKIP + "/" in c[1]])
+        out = self.stop("hizli", "--yonetim", stdin="yönetim için")
+        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", out)  # gelen deposu yalnız ekip
+        self.assertEqual(self.gh.mesajlar(self.YONETIM), ["tohum"])
+        os.environ["FAKE_GH_PUSH_GELEN"] = "false"
+        (self.cache / "hizli.json").unlink()
+        self.assertIn("tf-bilgi-gelen) yazma yetkisi olmalı", self.stop("hizli", stdin="not"))
+
+    def test_gelen_deposu_geri_al(self):
+        self.gelen_kur()
+        kod = self.hizli(not_metni="geri alacağım bunu")["kod"]
+        g = self.ok("geri-al", kod)
+        self.assertEqual((g["sonuc"], g["yol"]), ("silindi", "gelen"))
+        self.assertEqual(g["satir"], f"Geri alındı: {kod} TF Bilgi'ye aktarılmadan önce kaldırıldı.")
+        self.assertEqual(self.kayit(self.GELEN, kod), {})
+        kod = self.hizli(not_metni="aktarılacak bir not")["kod"]
+        klasor = f"20261105-123000-ayse-{kod[2:]}"
+        kayit = self.kayit(self.GELEN, kod)
+        self.gh.baskasi_yazar(self.GELEN, {**{f"00-gelen/{klasor}/{a}": None for a in kayit},
+                                           **{f"tasindi/{klasor}/{a}": v for a, v in kayit.items()}},
+                              "gelen-depo: aktarıldı")  # aktarım kaydı tf-bilgi'ye taşıdı
+        g = self.ok("geri-al", kod)
+        self.assertEqual((g["sonuc"], g["yol"]), ("kaydedildi", "gelen"))
+        meta = json.loads(self.kayit(self.GELEN, g["kod"])["meta.json"])
+        self.assertEqual((meta["tur"], meta["geri_alinan"], meta["gonderen"]), ("geri-al", kod, "ayse"))
+        self.gh.baskasi_yazar(self.GELEN, {"tasindi/20261105-090000-mert-z9z9z9/meta.json": "{}"})
+        once = self.gh.depolar[self.GELEN]["ref"]
+        self.assertEqual(self.stop("geri-al", "G-z9z9z9").strip(), "Bu kod senin paylaşımın değil.")
+        self.assertEqual(self.gh.depolar[self.GELEN]["ref"], once)
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
+
+    def test_artifact_baglantisi_eksiz_gitmez(self):
+        for baglanti in ("https://claude.ai/artifact/3N4hkg84BjfdHnXCNHBjJK", "https://claude.ai/code/artifact/ab-12",
+                         "https://claude.ai/public/artifacts/0b1c2d3e", "https://claude.site/artifacts/xyz"):
+            out = self.stop("hizli", stdin=f"Ilgım baksın {baglanti}\n")
+            self.assertIn("Claude artifact bağlantısı var ama ek yok", out, baglanti)
+        self.assertEqual(self.gh.cagrilar, [])  # hiçbir şey gönderilmedi
+        r = self.hizli("--ek", self.ek("sayfa.html", "<html>x</html>"),
+                       not_metni="https://claude.ai/artifact/3N4hkg84BjfdHnXCNHBjJK Ilgım baksın\n")
+        self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json", "sayfa.html"])
+        r = self.hizli(not_metni="Sprint planı: https://docs.google.com/spreadsheets/d/1AbC/edit Oğuz baksın\n")
+        self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json"])  # Google bağlantısı gider
 
 
 class HizliYardimciTest(unittest.TestCase):
