@@ -142,7 +142,8 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
                           "incomplete_results": bool(os.environ.get("FAKE_GH_ARAMA_EKSIK"))}))
         sys.exit(0)
     if len(parca) == 3:  # repos/<sahip>/<ad>: push yetkisi
-        if os.environ.get("FAKE_GH_REPO_404"):  # depo bu hesaba görünmüyor (private, erişim yok)
+        if os.environ.get("FAKE_GH_REPO_404") or parca[2] in os.environ.get("FAKE_GH_404_DEPOLAR", "").split(","):
+            # depo bu hesaba görünmüyor (private, erişim yok); FAKE_GH_404_DEPOLAR: yalnız bu depo adları
             print("gh: Not Found (HTTP 404)", file=sys.stderr)
             sys.exit(1)
         cik("FAKE_GH_REPO_CIKIS")
@@ -280,7 +281,7 @@ class Base(unittest.TestCase):
         self.issues.write_text(json.dumps({"issues": [], "comments": {}, "labels": [], "next": 20}))
         os.environ["FAKE_GH_ISSUES"] = str(self.issues)
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
-                     "FAKE_GH_PUSH_GELEN", "TF_BILGI_GELEN_DEPOSU",
+                     "FAKE_GH_PUSH_GELEN", "TF_BILGI_GELEN_DEPOSU", "FAKE_GH_404_DEPOLAR",
                      "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
                      "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
                      "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS", "TF_BILGI_YOL", "TF_BILGI_KOPRU_URL",
@@ -3254,6 +3255,51 @@ class HizliTest(Base):
         self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json", "sayfa.html"])
         r = self.hizli(not_metni="Sprint planı: https://docs.google.com/spreadsheets/d/1AbC/edit Oğuz baksın\n")
         self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json"])  # Google bağlantısı gider
+
+    def test_gelen_yonetimi_goremeyen_uyeye_slack_yolu(self):
+        """review #14: yönetim deposu private; göremeyen (404) ekip üyesi "bulunamadı" değil, Slack yolunu duyar."""
+        self.gelen_kur()
+        os.environ["FAKE_GH_404_DEPOLAR"] = "tf-bilgi-yonetim"
+        out = self.stop("hizli", "--yonetim", stdin="yönetim için bütçe")
+        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", out)
+        self.assertNotIn("bulunamadı", out)
+        self.assertEqual(self.gh.mesajlar(self.YONETIM), ["tohum"])
+        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])
+
+    def test_gelen_kimlik_yalniz_github_girisinden(self):
+        """review #14: aktarım `gonderen_ham`'ı kişinin GitHub hesabıyla denetler; eşleşmeyen kimlik göndermeden durur."""
+        self.gelen_kur()
+        os.environ.update({"FAKE_GH_LOGIN": "tanimsiz-gh", "TF_BILGI_KISI": "ayse"})
+        out = self.stop("hizli", stdin="Nil baksın")
+        self.assertIn("GitHub hesabın (tanimsiz-gh) tf-bilgi kisiler.json'da senin adına kayıtlı olmalı", out)
+        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])  # hiçbir şey gönderilmedi
+        self.assertFalse([c for c in self.gh.cagrilar if c[0] == "POST"])
+
+    def test_gelen_dosya_sayisi_siniri(self):
+        self.gelen_kur()
+        ekler = []
+        for i in range(59):
+            ekler += ["--ek", self.ek(f"not-{i:02d}.md", f"not {i}")]
+        out = self.stop("hizli", *ekler, stdin="çok dosya")
+        self.assertIn("Tek paylaşımda en çok 58 dosya gider", out)
+        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])
+        r = self.hizli(*ekler[:-2], not_metni="58 dosya + not")  # sınırda: 58 ek + govde.md + meta.json = 60
+        self.assertEqual((r["yol"], len(self.kayit(self.GELEN, r["kod"]))), ("gelen", 60))
+
+    def test_gelen_onbellekte_varsa_yazan_yetkisi_tazelenmez(self):
+        """review #14: yazamayan üyenin her paylaşımı bilgi deposu yetkisini ağdan yeniden sormasın."""
+        self.gelen_kur()
+        self.hizli(not_metni="birinci paylaşım")
+        self.hizli(not_metni="ikinci paylaşım")
+        self.assertEqual(len(self.yetki_cagrilari(self.EKIP)), 1)
+        self.assertEqual(len(self.yetki_cagrilari(self.GELEN)), 1)
+
+    def test_gelen_geri_al_dogrudan_zorlamasinda_da(self):
+        self.gelen_kur()
+        os.environ["TF_BILGI_YOL"] = "dogrudan"
+        kod = self.hizli(not_metni="geri alınacak")["kod"]
+        g = self.ok("geri-al", kod)
+        self.assertEqual((g["sonuc"], g["yol"]), ("silindi", "gelen"))
 
 
 class HizliYardimciTest(unittest.TestCase):

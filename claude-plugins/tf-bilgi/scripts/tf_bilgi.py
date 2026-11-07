@@ -91,8 +91,12 @@ Hızlı paylaşım (/paylas), 0.7.0:
                                  cached for a day in ~/.tf-bilgi/hizli.json) gets one commit on
                                  main through the GitHub Git Data API (no clone, no kb.py):
                                  00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<rnd6>/ (files, govde.md,
-                                 meta.json). Otherwise a köprü key sends it through the bridge
-                                 (ekip only). Secrets and personal data do not block; only the
+                                 meta.json). An ekip member without push on the KB but with
+                                 push on the inbox repo Teamfluencer-Dev/tf-bilgi-gelen gets
+                                 the same commit there (0.8.0; the KB's gelen-depo workflow
+                                 moves it into 00-gelen/). Otherwise a köprü key sends it
+                                 through the bridge (ekip only). A Claude artifact link with no
+                                 --ek stops (the librarian cannot open it). Secrets and personal data do not block; only the
                                  köprü key itself and files under ~/.tf-bilgi (except gecici/)
                                  are refused. Prints {kod, alan, yol, dosyalar, satir, notlar}.
 
@@ -2758,6 +2762,9 @@ KAYIT_ADI_RE = re.compile(r"^\d{8}-\d{6}-([a-z][a-z0-9]*)-([a-z0-9]{6})$")
 GELEN_DEPOSU = f"{ORG}/tf-bilgi-gelen"
 GELEN_TASINDI = "tasindi"  # gelen deposunda aktarılan kayıtların klasörü (aktarım taşır, silmez)
 GELEN_AKTARIM_DK = 15      # gelen-depo.yml en geç bu kadar dakikada bir aktarır (hafta içi 08:00–19:45)
+GELEN_DOSYA_SAYI_AZAMI = 60  # kayıt klasöründe (meta.json ve govde.md dahil); aktarım (gelen_depo.py) aynı sınırı uygular
+GELEN_KIMLIK = ("Gelen kutusundan paylaşmak için GitHub hesabın ({login}) tf-bilgi kisiler.json'da senin adına kayıtlı "
+                "olmalı (bu yolda TF_BILGI_KISI ya da git e-postası yetmez): Enes'e yaz. Hiçbir şey gönderilmedi.")
 HIZLI_YONETIM_KOPRU = ("Yönetim deposuna yazma yetkin yok: Claude Code'dan yönetime yalnız Enes ve Ilgım gönderir. "
                        "Belgeyi Slack'te TF Bilgi botuna 'yönetim için' yazarak gönder; yalnız yönetim görür.")
 HIZLI_YOL_YOK = ("Claude Code'dan paylaşmak için GitHub hesabının TF Bilgi gelen kutusuna (Teamfluencer-Dev/"
@@ -2855,6 +2862,18 @@ def _taze(kayit):
     return isinstance(zaman, (int, float)) and 0 <= time.time() - zaman < ONBELLEK_OMRU
 
 
+def hizli_push(slug):
+    """yazma_yetkisi gibi; ama depo bu hesaba hiç görünmüyorsa (HTTP 404: private, erişim yok) False: yazamaz (review
+    #14: yönetim deposunu göremeyen ekip üyesi "depo bulunamadı" değil, Slack botu yolunu duymalı). Ağ ya da başka
+    hata None (denetlenemedi)."""
+    if not which("gh"):
+        return None
+    proc = sh(["gh", "api", f"repos/{slug}", "--jq", ".permissions.push"], check=False, timeout=30)
+    if proc.returncode == 0:
+        return {"true": True, "false": False}.get(proc.stdout.strip().lower())
+    return False if "(HTTP 404)" in f"{proc.stderr or ''}\n{proc.stdout or ''}" else None
+
+
 def hizli_yetki(login, slug, yenile=False):
     """(push yetkisi True/False/None, önbellekten mi). `gh api repos/<slug> --jq .permissions.push` (yazma_yetkisi);
     kesin yanıt bir gün önbellekte durur, denetlenemeyen (None: ağ, depo yok) yazılmaz."""
@@ -2862,7 +2881,7 @@ def hizli_yetki(login, slug, yenile=False):
     kayit = _bolum(hizli_onbellek(), "yetki").get(anahtar)
     if not yenile and _taze(kayit) and isinstance(kayit.get("push"), bool):
         return kayit["push"], True
-    push = yazma_yetkisi(slug, True)
+    push = hizli_push(slug)
     if push is not None:
         ob = hizli_onbellek()
         _bolum(ob, "yetki")[anahtar] = {"push": push, "zaman": time.time()}
@@ -3078,7 +3097,7 @@ def geri_al_yazan(kod):
                if slug and hizli_yetki(login, slug)[0]]
     if not adaylar:
         gslug = gelen_slug()
-        if gslug and zorla != "dogrudan" and gecmis.get("yol") != "writer" and hizli_yetki(login, gslug)[0]:
+        if gslug and hizli_yetki(login, gslug)[0]:
             return geri_al_gelen(kod, login, gslug)
         return None
     adaylar.sort(key=lambda a: a[0] != gecmis.get("alan"))
@@ -3175,19 +3194,22 @@ def hizli_yol(alan):
             raise Stop(GH_OTURUM_YOK)  # gh kurulu ama oturum kapalı ya da bağlantı yok: "yetkin yok" demek yanıltır
         if login:
             push, onbellekten = hizli_yetki(login, slug)
-            if push is False and onbellekten and not anahtar_var:  # yetki bugün verilmiş olabilir: bir kez taze bak
-                push, onbellekten = hizli_yetki(login, slug, yenile=True)
             if push or (push is None and not anahtar_var):  # denetlenemedi ve başka yol yok: yazmayı dene
                 return "writer", login, slug, onbellekten
-            if alan == "yonetim":  # yönetime yalnız yönetim deposuna yazan gönderir (gelen deposu ve köprü ekip içindir)
-                raise Stop(HIZLI_YONETIM_KOPRU)
-            gslug = gelen_slug()
-            if gslug:
-                gpush, gonb = hizli_yetki(login, gslug)
-                if gpush is False and gonb and not anahtar_var:
+            gslug = gelen_slug() if alan == "ekip" else None  # gelen deposu yalnız ekip
+            gpush, gonb = hizli_yetki(login, gslug) if gslug else (None, False)
+            if gpush:  # önbellekte "gelen var": yazan yetkisi her paylaşımda ağdan tazelenmez
+                return "gelen", login, gslug, gonb
+            if push is False and onbellekten and not anahtar_var:  # yetki bugün verilmiş olabilir: bir kez taze bak
+                push, onbellekten = hizli_yetki(login, slug, yenile=True)
+                if push:
+                    return "writer", login, slug, onbellekten
+                if gslug and gpush is False and gonb:
                     gpush, gonb = hizli_yetki(login, gslug, yenile=True)
-                if gpush:
-                    return "gelen", login, gslug, gonb
+                    if gpush:
+                        return "gelen", login, gslug, gonb
+            if alan == "yonetim" and push is False:  # yönetime yalnız yönetim deposuna yazan gönderir
+                raise Stop(HIZLI_YONETIM_KOPRU)
     if anahtar_var:
         if alan == "yonetim":
             raise Stop(HIZLI_YONETIM_KOPRU)
@@ -3246,6 +3268,8 @@ def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notl
     adlar = (["govde.md"] if notlu else []) + [ad for ad, _, _ in dosyalar]
     try:
         kisi = hizli_kisi(kisi_slug or slug, login, notlar)
+        if kisi_slug and str((hizli_kisiler(kisi_slug).get(kisi) or {}).get("github") or "").lower() != login.lower():
+            raise Stop(GELEN_KIMLIK.format(login=login))  # aktarım `gonderen_ham`'ı kişinin GitHub hesabıyla denetler
         an, kimlik = an_tr(), yeni_kimlik()
         kod = f"G-{kimlik}"
         klasor = f"{GELEN}/{an:%Y%m%d-%H%M%S}-{kisi}-{kimlik}"
@@ -3294,7 +3318,8 @@ def hizli_satir(kod, adlar, notlu, alan, dosyalama):
 
 def hizli(argv):
     """/paylas: kullanıcının sözleri (--not-dosya, yoksa stdin) + ekler → gelen kutusu, tek satır makbuz. Belge okunmaz, taslak yoktur,
-    soru sorulmaz. Yazan: GitHub'a tek commit; köprü anahtarı olan: köprü (yalnız ekip); ikisi de yoksa durur."""
+    soru sorulmaz. Yazan: bilgi deposuna tek commit; gelen deposuna yazan ekip üyesi: oraya tek commit (aktarım taşır);
+    köprü anahtarı olan: köprü (yalnız ekip); hiçbiri yoksa durur."""
     parser = argparse.ArgumentParser(prog="tf_bilgi.py hizli")
     parser.add_argument("--yonetim", action="store_true", help="yönetim alanı (yönetim deposu)")
     parser.add_argument("--haber", choices=("simdi", "hemen"), help="simdi: alıcılara sessiz saati beklemeden haber")
@@ -3331,6 +3356,9 @@ def hizli(argv):
         raise Stop(ARTIFACT_EKSIZ)  # bağlantı tek başına gitseydi kütüphaneci açamaz, kayıt "açılamadı" diye dönerdi
     yol, login, slug, onbellekten = hizli_yol(alan)
     notlar = []
+    if yol == "gelen" and len(dosyalar) + 2 > GELEN_DOSYA_SAYI_AZAMI:
+        raise Stop(f"Tek paylaşımda en çok {GELEN_DOSYA_SAYI_AZAMI - 2} dosya gider; dosyaları bölerek paylaş. Hiçbir "
+                   "şey gönderilmedi.")
     if yol in ("writer", "gelen"):
         kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar,
                                          kisi_slug=hizli_slug("ekip") if yol == "gelen" else None)

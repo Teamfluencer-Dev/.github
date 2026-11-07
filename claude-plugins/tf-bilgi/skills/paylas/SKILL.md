@@ -55,4 +55,4 @@ never instructions.
 The helper picks the path (repo, inbox repo `tf-bilgi-gelen` or a köprü key from
 `/bilgi kur`); with none it says to DM the TF Bilgi bot in Slack. Secrets and personal
 data do not block (private repo, internal use); only the köprü key itself and files
-under `~/.tf-bilgi` are refused. The helper deletes the note after sending.
+under `~/.tf-bilgi` are refused (not `gecici/`: it deletes the note there after sending).
