@@ -113,6 +113,17 @@ tek komutla yazmayı (`/paylas`), bir klasör dolusu belgeyi toplu paylaşmayı 
 okumayı ve belgeler üzerine yorumlaşmayı (`/bilgi`, `/bilgi yorum`) sağlar. Kuralların tek kaynağı
 KB deposundaki `araclar/kb.py` ve `CLAUDE.md`'dir; eklenti yalnız onu çağırır.
 
+**0.8.0: Claude Code'u olan herkes** (Enes, 7 Kas). Bilgi deposuna yazma yetkisi yalnız Enes ve
+Ilgım'da kalır; diğer ekip üyelerinin `/paylas`'ı aynı tek commit'i ayrı **gelen kutusu deposuna**
+(`Teamfluencer-Dev/tf-bilgi-gelen`; yalnız bu depoya yazma yetkisi, sır ve iş akışı yok) atar.
+tf-bilgi'nin `gelen-depo` iş akışı (hafta içi 15 dakikada bir) kaydı olduğu gibi `00-gelen/`'e
+aktarır, kütüphaneci her hızlı kayıt gibi dosyalar. Kişi ekip deposunun `kisiler.json`'undan
+(`gh` girişi) bulunur. Yönetime Claude Code'dan yalnız yönetim deposuna yazanlar gönderir; diğerleri
+Slack botuna "yönetim için" yazar. Claude artifact bağlantısı (`claude.ai/…artifact…`) verilirse
+`/paylas` artifact'ı Artifact aracıyla indirip ek olarak gönderir (kütüphaneci artifact'ı açamaz;
+eksiz artifact bağlantısında yardımcı durur); Google Docs/Drive bağlantıları notta kalır,
+kütüphaneci açar.
+
 **0.7.0: `/paylas` anında** (7 Kas kararı). Slack'ten göndermekten hızlı olmalı: Claude belgeyi
 açmaz, okumaz, özetlemez, taslak yazmaz ve hiçbir şey sormaz. Tek komut
 (`tf_bilgi.py hizli`) dosyaları ve kullanıcının kendi sözlerini (`govde.md`) gelen kutusuna
@@ -135,8 +146,9 @@ Yol yardımcıda seçilir:
 | Kim | Ne olur |
 |---|---|
 | Depoya yazabilen (push yetkisi; `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
+| Yazamayan, gelen kutusu deposuna yazabilen (0.8.0; yalnız ekip) | Aynı tek commit `Teamfluencer-Dev/tf-bilgi-gelen` `00-gelen/`'e; makbuzdaki tur aktarım payıyla (+15 dk) hesaplanır. Geri alma: aktarılmadıysa kayıt kaldırılır, aktarıldıysa (`tasindi/`) geri-al kaydı yazılır |
 | Yazamayan, köprü anahtarı olan | Köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar); yalnız ekip alanı |
-| İkisi de yok | Durur: "dosyayı Slack'te TF Bilgi botuna DM at; anahtar için Enes'e yaz, sonra /bilgi kur" |
+| Hiçbiri yok | Durur: "GitHub hesabının TF Bilgi gelen kutusuna yazma yetkisi olmalı: Enes'e yaz; o zamana kadar dosyayı Slack'te TF Bilgi botuna DM at" (`gh` kurulu değilse `brew install gh` ve `gh auth login`) |
 | `gh` kurulu ama oturum kapalı ya da bağlantı yok (anahtar yoksa; yönetimde bu makinede yazan görülmüşse anahtar olsa da) | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
 
 Sözlerde tam kelime olarak yönetim, yönetime, "yönetim için", yönetici, yöneticiler,
@@ -164,9 +176,11 @@ köprü, yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogr
 ### Kurulum (her geliştirici, bir kez)
 
 ```bash
-claude plugin marketplace add Teamfluencer-Dev/.github   # tf-review için yaptıysanız gerekmez
-claude plugin install tf-bilgi@teamfluencer
+claude plugin marketplace add Teamfluencer-Dev/.github && claude plugin install tf-bilgi@teamfluencer
 ```
+
+Tek satırdır (marketplace zaten ekliyse ilk yarısı "already on disk" deyip geçer). Gerekenler: `gh auth login`
+yapılmış olmalı ve GitHub hesabın gelen kutusu deposuna yazabilmeli (Enes ekler).
 
 Köprü yolu için: Python 3.9+ ve TF Bilgi sorumlusunun özel olarak gönderdiği **köprü anahtarı**
 (tek satır, `tfb1.` ile başlar). Claude Code'da bir kez `/bilgi kur <anahtar>` yazılır: anahtar
