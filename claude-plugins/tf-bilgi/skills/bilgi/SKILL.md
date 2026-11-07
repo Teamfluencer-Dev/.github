@@ -27,12 +27,12 @@ discussion page (`yorum`) and the köprü key (`kur`).
 
 Two paths, chosen by the helper (`hazirla` → `yol`):
 - **köprü** (`yol: "kopru"`): the person has a köprü key (`~/.tf-bilgi/anahtar`, written by
-  the Slack bot's one-line setup or `/bilgi kur`). The TF Bilgi Worker key (`tfb1.cf1.…`)
-  only shares: every read answers "Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla
+  the Slack bot's one-line setup or `/bilgi kur`). The TF Bilgi bridge key (the Worker, or
+  its Apps Script relay) only shares: every read answers "Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla
   gelir." (relay it as-is; documents reach people as Slack links). An older key goes
   through the old bridge: generated pages (kuyruk, SON, konu) come back as Markdown; gizli
   entries are shown with their Drive link only to their recipients.
-- **doğrudan** (`yol: "dogrudan"`): no key (or a Worker key and a logged-in `gh`); a local
+- **doğrudan** (`yol: "dogrudan"`): no key (or a bridge key and a logged-in `gh`); a local
   clone read with `gh` (read access).
 
 Who can add documents (decision of 6 Nov 2026): only the people in the repo's `.kb.json`

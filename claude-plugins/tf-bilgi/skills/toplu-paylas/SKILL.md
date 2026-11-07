@@ -93,8 +93,8 @@ before step 4 (subagents read it too).
    as-is and stop before staging anything (only the repo's `.kb.json` `yazanlar` can push;
    everyone else shares one by one with `/paylas` and a köprü key (write `anahtar` to the
    bot; `/bilgi kur` also installs it), or sends documents to the TF Bilgi bot in Slack
-   or to someone who can write to the repo, which the message says; a Worker köprü key
-   (`tfb1.cf1.…`) has no bulk share; it also stops when it cannot tell who the user is).
+   or to someone who can write to the repo, which the message says; the Slack bot's
+   köprü key has no bulk share; it also stops when it cannot tell who the user is).
    Keep `yol`, `kok`, `kisi`, `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay
    `notlar` as one short line each. `yol: "kopru"` → yönetim is off for this run (the
    köprü carries only ekip items; say it in one line) and `kok` is the köprü mirror.

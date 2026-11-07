@@ -114,9 +114,12 @@ okumayı ve belgeler üzerine yorumlaşmayı (`/bilgi`, `/bilgi yorum`) sağlar.
 KB deposundaki `araclar/kb.py` ve `CLAUDE.md`'dir; eklenti yalnız onu çağırır.
 
 **0.9.0: Claude Code'u olan herkes, GitHub'sız da** (Enes, 7 Kas; bitiş tasarımı §3–§5). Bilgi deposuna yazma
-yetkisi yalnız Enes ve Ilgım'da kalır. Diğer herkes kişi anahtarıyla (`tfb1.cf1.…`) **Cloudflare Worker köprüsünden**
+yetkisi yalnız Enes ve Ilgım'da kalır. Diğer herkes kişi anahtarıyla (`tfb1.<dağıtım>.…`) **TF Bilgi köprüsünden**
 gönderir: Slack'te TF Bilgi botuna `anahtar` yazınca bot tek satırlık kurulumu DM'den verir (eklenti kurulumu +
-`~/.tf-bilgi/anahtar`). Worker dosyaları ortak drive'a (`00-Gelen/claude/` ya da `01-Yonetim-Gelen/claude/`) yazar,
+`~/.tf-bilgi/anahtar`). Köprü bir Cloudflare Worker'dır; Türkiye'den `*.workers.dev` erişilemediği için anahtar
+çoğunlukla `script.google.com`'daki ince **Apps Script aktarıcısına** konuşur, aktarıcı isteği Worker'a iletir
+(`kim` yanıtında `protokol: 2`; parçalar JSON/base64, 3 MB). `tfb1.cf1.…` anahtarı (yurtdışı, VPN) Worker'a doğrudan
+gider (parçalar ham baytla `/parca`'ya). Worker dosyaları ortak drive'a (`00-Gelen/claude/` ya da `01-Yonetim-Gelen/claude/`) yazar,
 kütüphaneci oradan dosyalar. GitHub hesabı gerekmez. Worker yalnız paylaşım alır; `/bilgi` okuması köprüde yok
 ("Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla gelir."; GitHub oturumu olan doğrudan okur). Gelen kutusu
 deposu (`tf-bilgi-gelen`, 0.8.0) kaldırıldı. Claude artifact ve Google bağlantıları indirilmez: notun parçası olarak
@@ -146,7 +149,7 @@ Yol yardımcıda seçilir:
 | Kim | Ne olur |
 |---|---|
 | Depoya yazabilen (push yetkisi; `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
-| Yazamayan, köprü anahtarı olan (`tfb1.cf1.…`) | Worker köprüsünden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar; parçalar ham baytla `/parca`'ya, aynı parçanın tekrarı güvenli); ekip ya da yönetim alanı. Dosya başı 90 MB, en çok 10 dosya. Eski Apps Script anahtarı (`tfb1.<dağıtım>.…`) eski adrese gider, yönetime gönderemez |
+| Yazamayan, köprü anahtarı olan | Önce `kim`, sonra köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar; aynı parçanın tekrarı güvenli); ekip ya da yönetim alanı. Dosya başı 90 MB, en çok 10 dosya. Apps Script aktarıcısı (`tfb1.<AKfy…>.…`, protokol 2): parçalar JSON/base64 `parca` işlemiyle aktarıcıya, aktarıcı Worker'a iletir. `tfb1.cf1.…`: parçalar ham baytla Worker'ın `/parca`'sına. Protokolsüz eski Apps Script köprüsü eski akışla gider, yönetime gönderemez |
 | Hiçbiri yok | Çıkış 2, tek satır: "Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, sonra /paylas'ı tekrar dene." |
 | `gh` kurulu ama oturum kapalı ya da bağlantı yok ve bu makinede daha önce yazma yetkisi görülmüş | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
 
@@ -169,11 +172,11 @@ dosyalarındadır (`skills/paylas/references/`), yalnız açıkça istenince oku
 
 | Yol | Kim | Nasıl |
 |---|---|---|
-| **Köprü** | Köprü anahtarı olan herkes (GitHub hesabı gerekmez) | 0.9.0: Worker köprüsü (`cf1`) yalnız `/paylas`'ı (ve `geri-al`) taşır; `/bilgi` okuması, gizli paylaşım ve `/toplu-paylas` köprüde yok (sade bir cümleyle durur). Eski Apps Script köprüsü (kurulmadı) okuma, arama, yorum ve tercihi de taşırdı |
+| **Köprü** | Köprü anahtarı olan herkes (GitHub hesabı gerekmez) | 0.9.0: Worker köprüsü (Türkiye'den Apps Script aktarıcısıyla, yurtdışından `cf1` ile doğrudan) yalnız `/paylas`'ı (ve `geri-al`) taşır; `/bilgi` okuması, gizli paylaşım ve `/toplu-paylas` köprüde yok (sade bir cümleyle durur). Eski Apps Script köprüsü (kurulmadı) okuma, arama, yorum ve tercihi de taşırdı |
 | **Doğrudan** | Anahtarı olmayan, depoya yazma yetkisi olanlar (KB `.kb.json` `yazanlar`) | Bugünkü akış: önbellek klonu, `kb.py`, commit ve push |
 
 Yol `TF_BILGI_YOL` (`kopru` · `dogrudan`) ile zorlanır; yoksa `~/.tf-bilgi/anahtar` varsa
-köprü (Worker anahtarında `gh` girişi varsa okuma doğrudan), yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogrudan` ile seçer.
+köprü (yeni köprü anahtarında `gh` girişi varsa okuma doğrudan), yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogrudan` ile seçer.
 
 ### Kurulum (her geliştirici, bir kez)
 
@@ -184,7 +187,7 @@ claude plugin marketplace add Teamfluencer-Dev/.github && claude plugin install 
 Tek satırdır (marketplace zaten ekliyse ilk yarısı "already on disk" deyip geçer). `.github` deposu herkese açık:
 eklenti kurulumu GitHub hesabı istemez.
 
-Köprü yolu için: Python 3.9+ ve kişi **köprü anahtarı** (tek satır, `tfb1.cf1.` ile başlar). Slack'te TF Bilgi
+Köprü yolu için: Python 3.9+ ve kişi **köprü anahtarı** (tek satır, `tfb1.` ile başlar). Slack'te TF Bilgi
 botuna `anahtar` yazılır; bot DM'den tek satırlık kurulumu verir (eklenti kurulumu, `~/.tf-bilgi/anahtar` 0600).
 Elle kurmak için Claude Code'da bir kez `/bilgi kur <anahtar>` yazılır: anahtar
 Write aracıyla geçici dosyaya yazılır (kabuk argümanına girmez), köprüyle doğrulanır,
@@ -331,7 +334,7 @@ deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kal�
 | `TF_BILGI_UZAK_EKIP`, `TF_BILGI_UZAK_YONETIM` | Depo adresi (GitHub `sahip/ad`, git adresi ya da test için yerel yol) | `Teamfluencer-Dev/tf-bilgi`, `eneskrblt/tf-bilgi-yonetim` |
 | `TF_BILGI_SURUM_KONTROLU` | `0` → güncel sürüm kontrolü kapalı | açık |
 | `TF_BILGI_YOL` | `kopru` ya da `dogrudan`: yolu zorlar | `/paylas`: yazan önce, sonra köprü; diğer komutlar: anahtar varsa köprü, yoksa doğrudan |
-| `TF_BILGI_KOPRU_URL` | Köprü adresini ezer (ör. Worker başka bir adresten yayınlanırsa) | `cf1` anahtarı: `https://tf-bilgi-kopru.eneskarabulut.workers.dev`; eski anahtar: Apps Script dağıtımı |
+| `TF_BILGI_KOPRU_URL` | Köprü adresini ezer (ör. Worker ya da aktarıcı başka bir adresten yayınlanırsa) | `cf1` anahtarı: `https://tf-bilgi-kopru.eneskarabulut.workers.dev`; diğer anahtar: `https://script.google.com/macros/s/<dağıtım>/exec` (aktarıcı ya da eski köprü) |
 
 Önbellek klonunda commit'lenmemiş değişiklik varsa eklenti üzerine çekmez ve durur
 (ne yapılacağını yazar). Klonun `.kb.json` alanı beklenenle tutmazsa da durur.

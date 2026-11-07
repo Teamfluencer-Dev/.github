@@ -107,11 +107,14 @@ Hızlı paylaşım (/paylas), 0.7.0; 0.9.0 (Claude Code herkes için):
 
 Köprü (bridge) path, 0.6.0; 0.9.0. A person with a köprü key (~/.tf-bilgi/anahtar, one
 pasted string `tfb1.<deployment>.<secret>`, written by the Slack bot's one-line setup or by
-`/bilgi kur`) works without GitHub. Deployment `cf1` is the Cloudflare Worker
-(KOPRU_CF_ADRES, TF_BILGI_KOPRU_URL overrides): it only takes shares (kim, baslat, raw
-/parca chunks, bitir, geri-al, alindi) and answers every read with `desteklenmiyor`; reads
-come to people as Slack links. Older keys (a Google Apps Script deployment id) still reach
-the Apps Script bridge, which also serves reads. For /paylas (hizli, geri-al) a writer
+`/bilgi kur`) works without GitHub. The bridge is a Cloudflare Worker that only takes shares
+(kim, baslat, chunks, bitir, geri-al, alindi) and answers every read with `desteklenmiyor`;
+reads come to people as Slack links. Deployment `cf1` talks to the Worker directly
+(KOPRU_CF_ADRES; raw /parca chunks). Any other deployment is a Google Apps Script web app
+(*.workers.dev is blocked from Turkey): `kim` first; `protokol >= 2` means a thin relay to
+the Worker (same flow, chunks as JSON/base64 `parca` when `parca_json`); no `protokol` means
+the old Apps Script bridge (old JSON flow, also serves reads). TF_BILGI_KOPRU_URL overrides
+the address. For /paylas (hizli, geri-al) a writer
 (KB push) wins over the köprü key. For the other commands the path is `TF_BILGI_YOL`
 (kopru | dogrudan) or, when unset, köprü if the key file exists (a `cf1` key: the direct
 GitHub path when `gh` is logged in), else the direct (GitHub) path above.
@@ -2151,18 +2154,21 @@ def yorumlar(argv):
 
 # --- köprü (bridge): GitHub'sız paylaşım (0.6.0; 0.9.0 Cloudflare Worker; köprü sözleşmesi v1) ---
 #
-# 0.9.0: köprü bir Cloudflare Worker'dır (KB `kopruler/cf-kopru/`, dağıtım kimliği `cf1`): paylaşımı ortak drive'daki
-# gelen kutusuna (`00-Gelen/claude/<kayıt>/` ya da `01-Yonetim-Gelen/claude/<kayıt>/`, meta.json en son) yazar,
-# kütüphaneci oradan dosyalar. Okuma köprüde yoktur (`desteklenmiyor`): belgeler kişilere Slack'ten bağlantıyla gelir.
-# Parçalar ham gövdeyle (`/parca`, base64 yok) gider; Worker onları tamponlamadan Drive'a akıtır. Eski anahtarlar
-# (Apps Script dağıtım kimliği) Apps Script köprüsüne gitmeye devam eder. Kişi anahtarı tek yapıştırmalık dizedir
+# 0.9.0: köprü bir Cloudflare Worker'dır (KB `kopruler/cf-kopru/`): paylaşımı ortak drive'daki gelen kutusuna
+# (`00-Gelen/claude/<kayıt>/` ya da `01-Yonetim-Gelen/claude/<kayıt>/`, meta.json en son) yazar, kütüphaneci oradan
+# dosyalar. Okuma köprüde yoktur (`desteklenmiyor`): belgeler kişilere Slack'ten bağlantıyla gelir. Türkiye'den
+# *.workers.dev erişilemediği için anahtarın dağıtımı çoğunlukla bir Apps Script web uygulamasıdır
+# (script.google.com/macros/s/<dağıtım>/exec): bu ince aktarıcı isteği Worker'a iletir. Hangi köprü olduğu `kim`
+# yanıtından anlaşılır (köprü protokolü 2: yeni akış; `parca_json`: parçalar JSON/base64 `parca` işlemiyle). `cf1`
+# dağıtımı (yurtdışı, VPN) doğrudan Worker'dır: parçalar ham gövdeyle (`/parca`, base64 yok) gider, Worker onları
+# tamponlamadan Drive'a akıtır. Protokolsüz eski Apps Script köprüsü eski JSON akışıyla çalışmaya devam eder. Kişi anahtarı tek yapıştırmalık dizedir
 # (`tfb1.<dağıtım>.<gizli>`; Slack botu `anahtar` komutuyla verir). Gizli kısım yalnız istek gövdesinde ya da
 # Authorization başlığında gider (adreste değil) ve hiçbir mesaja, çıktıya ya da günlüğe yazılmaz.
 
 KOPRU_SOZLESME = 1
 ANAHTAR_RE = re.compile(r"^tfb1\.([A-Za-z0-9_-]{3,200})\.([0-9a-f]{64})$")
 ANAHTAR_ARA_RE = re.compile(r"(?<![A-Za-z0-9_.-])tfb1\.[A-Za-z0-9_-]{3,200}\.[0-9a-f]{64}(?![0-9a-f])")
-KOPRU_ADRES = "https://script.google.com/macros/s/{}/exec"   # eski anahtarlar: Apps Script köprüsü
+KOPRU_ADRES = "https://script.google.com/macros/s/{}/exec"   # Apps Script: aktarıcı (protokol 2) ya da eski köprü
 KOPRU_CF_ADRES = "https://tf-bilgi-kopru.eneskarabulut.workers.dev"  # `cf1` anahtarları: Cloudflare Worker köprüsü
 CF_DAGITIM_RE = re.compile(r"^cf\d+$")
 AYNA = "kopru"             # ~/.tf-bilgi/kopru/: köprüden indirilen depo dosyalarının aynası (git klonu değil)
@@ -2239,18 +2245,57 @@ def cf_dagitim_mi(dagitim):
     return bool(CF_DAGITIM_RE.match(str(dagitim or "")))
 
 
-def cf_anahtari_mi():
-    """Kayıtlı anahtar Worker (cf) anahtarı mı; dosya yoksa ya da bozuksa False."""
+def kayitli_anahtar():
+    """Kayıtlı anahtar (dağıtım, gizli) ya da None (dosya yok ya da bozuk); hata vermez."""
     try:
-        anahtar = anahtar_coz(anahtar_yolu().read_text(encoding="utf-8"))
+        return anahtar_coz(anahtar_yolu().read_text(encoding="utf-8"))
     except OSError:
-        return False
+        return None
+
+
+def cf_anahtari_mi():
+    """Kayıtlı anahtar doğrudan Worker (cf) anahtarı mı; dosya yoksa ya da bozuksa False. Ağa gitmez."""
+    anahtar = kayitli_anahtar()
     return bool(anahtar) and cf_dagitim_mi(anahtar[0])
 
 
+_KIM_ONBELLEK = {}  # bir çalıştırmada köprünün `kim` yanıtı (main her çalıştırmada boşaltır): ağ çağrısı artmasın
+
+
+def kopru_kim(anahtar=None):
+    """Köprünün `kim` yanıtı; bir çalıştırmada anahtar ve adres başına bir kez sorulur (yalnız başarılı yanıt saklanır)."""
+    anahtar = anahtar or anahtar_oku()
+    k = (anahtar[0], hashlib.sha256(anahtar[1].encode("ascii")).hexdigest(), kopru_adresi(anahtar[0]))
+    if k not in _KIM_ONBELLEK:
+        _KIM_ONBELLEK[k] = kopru_cagir("kim", anahtar=anahtar)
+    return _KIM_ONBELLEK[k]
+
+
+def kopru_protokolu(kim):
+    """`kim` yanıtındaki köprü protokolü: 2 = yeni köprü (Worker ya da onun Apps Script aktarıcısı), yoksa 1 (eski)."""
+    p = (kim or {}).get("protokol")
+    return p if isinstance(p, int) and not isinstance(p, bool) else 1
+
+
+def yeni_kopru_mu():
+    """Kayıtlı anahtar yeni köprüye mi gidiyor (okuma yok, yönetime gönderilir, alan/konu istemciden): `cf` dağıtımı
+    ağsız evet; başka dağıtımda `kim.protokol >= 2` (Türkiye'den Apps Script aktarıcısı). kim yanıt vermezse False
+    (çağıran işlem aynı hatayı açıkça söyler)."""
+    anahtar = kayitli_anahtar()
+    if not anahtar:
+        return False
+    if cf_dagitim_mi(anahtar[0]):
+        return True
+    try:
+        return kopru_protokolu(kopru_kim(anahtar)) >= 2
+    except Stop:
+        return False
+
+
 def yol_sec():
-    """Sözleşme §1: TF_BILGI_YOL zorlar; yoksa anahtar dosyası varsa köprü, yoksa doğrudan (GitHub) yol. 0.9.0: Worker
-    (`cf1`) anahtarı okuma yapmaz; `gh` girişi olan (depoyu GitHub'dan okuyabilen) için okuma doğrudan yoldan gider."""
+    """Sözleşme §1: TF_BILGI_YOL zorlar; yoksa anahtar dosyası varsa köprü, yoksa doğrudan (GitHub) yol. 0.9.0: yeni
+    köprü (Worker ya da aktarıcısı) okuma yapmaz; `gh` girişi olan (depoyu GitHub'dan okuyabilen) için okuma doğrudan
+    yoldan gider."""
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
     if zorla == "dogrudan":
         return "dogrudan"
@@ -2262,7 +2307,7 @@ def yol_sec():
         raise Stop(f"TF_BILGI_YOL anlaşılmadı: {zorla!r} (kopru ya da dogrudan).")
     if not anahtar_yolu().is_file():
         return "dogrudan"
-    if cf_anahtari_mi() and gh_login():
+    if yeni_kopru_mu() and gh_login():  # önce köprü (kim önbellekte, köprü yolu onu zaten sorar), sonra GitHub
         return "dogrudan"
     return "kopru"
 
@@ -2417,7 +2462,7 @@ def ayna_kur():
 
 
 def ayna_mevcut():
-    if cf_anahtari_mi():  # Worker köprüsü okumaz: ayna yok
+    if yeni_kopru_mu():  # yeni köprü okumaz: ayna yok
         raise Stop(KOPRU_OKUMA_YOK)
     kok = ayna_koku()
     if not (kok / ".kb.json").is_file() or not (kok / AYNA_KISI).is_file():
@@ -2445,8 +2490,8 @@ KISI_RE = re.compile(r"^[a-z][a-z0-9]*$")
 
 
 def hazirla_kopru(args):
-    """Köprü yolunda hazırlık: kim + ayna; doğrudan yolla aynı JSON anahtarları (`yol: "kopru"`, `kok` = ayna). Worker
-    (`cf1`) anahtarında okuma ve ayna yoktur: /bilgi okuması ve /toplu-paylas köprüde çalışmaz, yalnız /paylas."""
+    """Köprü yolunda hazırlık: kim + ayna; doğrudan yolla aynı JSON anahtarları (`yol: "kopru"`, `kok` = ayna). Yeni
+    köprüde (Worker ya da aktarıcısı) okuma ve ayna yoktur: /bilgi okuması ve /toplu-paylas çalışmaz, yalnız /paylas."""
     if cf_anahtari_mi():
         raise Stop(KOPRU_YALNIZ_PAYLAS if args.yazma else KOPRU_OKUMA_YOK)
     if args.yonetim:
@@ -2454,8 +2499,8 @@ def hazirla_kopru(args):
     if sys.version_info < (3, 9):
         raise Stop(f"Python 3.9 ya da üstü gerekli (şu an {sys.version.split()[0]}). Güncel bir python3 kurun.")
     notlar = [n for n in (surum_notu(True),) if n]
-    kim = kopru_cagir("kim")
-    if kim.get("okuma") is False:  # okumayan köprü (Worker)
+    kim = kopru_kim()
+    if kim.get("okuma") is False or kopru_protokolu(kim) >= 2:  # okumayan köprü (Worker ya da aktarıcısı)
         raise Stop(KOPRU_YALNIZ_PAYLAS if args.yazma else KOPRU_OKUMA_YOK)
     kisi = str(kim.get("kisi") or "")
     if not KISI_RE.match(kisi):
@@ -2752,7 +2797,7 @@ def gonder(argv):
     parser.add_argument("--ek", action="append", default=[], help="paylaşılan dosya (mutlak yol); birden çok kez")
     args = parser.parse_args(argv)
     kopru_gerekli("gonder", "Doğrudan yolda paylaşım `tf_bilgi.py yaz` ve `kaydet` ile yapılır.")
-    if cf_anahtari_mi():  # Worker yalnız hızlı kaydı alır (taslaklı, gizli ve toplu paylaşım yok)
+    if yeni_kopru_mu():  # yeni köprü yalnız hızlı kaydı alır (taslaklı, gizli ve toplu paylaşım yok)
         raise Stop(KOPRU_YALNIZ_PAYLAS)
     kok = ayna_mevcut()
     kimlik = kopru_kimligi()
@@ -2862,11 +2907,12 @@ def dosya_ozeti_al(kaynak):
     return boyut, ozet.hexdigest()
 
 
-def kopru_gonder(taslak, dosyalar, sinir, ek=None):
+def kopru_gonder(taslak, dosyalar, sinir, ek=None, parca_json=False):
     """Köprü kaydı (sözleşme §4): baslat → parca* → bitir. dosyalar: [(köprüdeki ad, kaynak, görünen ad)]; kaynak yerel
     yol ya da bayt. ek: baslat'a giden ek alanlar (Worker: alan, konu_satiri, aciklama). Worker baslat'ta dosya başına
-    `yuklemeler` belirteci verirse parçalar ham gövdeyle `/parca`'ya gider ve bitir `durum` belirtecini taşır; vermezse
-    eski köprünün JSON/base64 parçaları. Yarıda kalırsa kaydı geri-al ile durdurmayı dener. → (kod, baslat yanıtı,
+    `yuklemeler` belirteci verirse parçalar ham gövdeyle `/parca`'ya gider (parca_json: Apps Script aktarıcısı ham gövde
+    alamaz, belirteçli JSON/base64 `parca`) ve bitir `durum` belirtecini taşır; vermezse eski köprünün JSON/base64
+    parçaları. Yarıda kalırsa kaydı geri-al ile durdurmayı dener. → (kod, baslat yanıtı,
     bitir yanıtı, özetler)."""
     ozetler = []
     for ad, kaynak, _ in dosyalar:
@@ -2887,7 +2933,7 @@ def kopru_gonder(taslak, dosyalar, sinir, ek=None):
             if yuklemeler is None:
                 kopru_yukle(kod, ad, kaynak, parca_bayt)
             else:
-                kopru_yukle_ham(yuklemeler[ad], kaynak, parca_bayt)
+                kopru_yukle_belirtecli(yuklemeler[ad], kaynak, parca_bayt, parca_json)
         bit = kopru_bitir(kod, bas.get("durum") if yuklemeler is not None else None)
     except Stop as e:
         try:
@@ -2933,15 +2979,20 @@ def kopru_yukle(kod, ad, kaynak, parca_bayt):
                 return
 
 
-def kopru_yukle_ham(yukleme, kaynak, parca_bayt):
-    """Worker: dosyayı sırayla ham parçalarla gönderir (son parça kısa; boş dosya tek boş parça). Aynı sıra yeniden
-    gönderilebilir (Worker Drive'a ne kadarını aldığını sorar); bağlantı ve geçici Drive hatası yeniden denenir."""
+def kopru_yukle_belirtecli(yukleme, kaynak, parca_bayt, parca_json=False):
+    """Yeni köprü: dosyayı sırayla parçalarla gönderir (son parça kısa; boş dosya tek boş parça). Worker'a ham gövdeyle
+    (`/parca`), aktarıcıya JSON/base64 `parca` işlemiyle (`yukleme` belirteci, sıra). Aynı sıra yeniden gönderilebilir
+    (Worker Drive'a ne kadarını aldığını sorar); bağlantı ve geçici Drive hatası (`kod: drive`) yeniden denenir."""
     boyut = len(kaynak) if isinstance(kaynak, bytes) else kaynak.stat().st_size
     with (io.BytesIO(kaynak) if isinstance(kaynak, bytes) else open(kaynak, "rb")) as dosya:
         sira = 0
         while True:
             veri = dosya.read(parca_bayt)
-            kopru_tekrarla(lambda: kopru_parca_gonder(yukleme, sira, veri))
+            if parca_json:
+                alanlar = {"yukleme": yukleme, "sira": sira, "veri": base64.b64encode(veri).decode("ascii")}
+                kopru_tekrarla(lambda: kopru_cagir("parca", alanlar, KOPRU_PARCA_ZAMAN_ASIMI))
+            else:
+                kopru_tekrarla(lambda: kopru_parca_gonder(yukleme, sira, veri))
             sira += 1
             if dosya.tell() >= boyut:
                 return
@@ -3387,8 +3438,8 @@ def hizli_yol(alan, login=_HESAPLA):
                 if push:
                     return "writer", login, slug, onbellekten
     if anahtar_var:
-        if alan == "yonetim" and not cf_anahtari_mi():
-            raise Stop(KOPRU_ESKI_YONETIM)  # Apps Script köprüsü yalnız ekip gelen kutusuna yazar
+        if alan == "yonetim" and not yeni_kopru_mu():
+            raise Stop(KOPRU_ESKI_YONETIM)  # eski Apps Script köprüsü yalnız ekip gelen kutusuna yazar
         return "kopru", None, None, False
     if zorla == "kopru":
         raise Stop(ANAHTAR_YOK + " (TF_BILGI_YOL=kopru)")
@@ -3455,7 +3506,7 @@ def hizli_alan(args, not_metni):
     """Alan seçimi → (alan, alıcılar | None, gh girişi | _HESAPLA, Worker `kim` yanıtı | None). --yonetim / --ekip
     açıkça verildiyse o; değilse sözleşme §3 (alan_sec). Kural 4 ya da 1'in kelimesi yoksa gönderen ve kisiler gerekir:
     GitHub'dan okuyabilenin kisiler.json'u (bir gün önbellekte), değilse Worker anahtarlının `kim` yanıtı (ad ve
-    alanlar). Hiçbiri yoksa kisiler boş: alıcı bulunmaz, gönderen bilinmez → ekip."""
+    alanlar; eski köprüde yalnız gönderen). Hiçbiri yoksa kisiler boş: alıcı bulunmaz, gönderen bilinmez → ekip."""
     if args.yonetim or args.ekip:
         return ("yonetim" if args.yonetim else "ekip"), None, _HESAPLA, None
     if ekip_icin_mi(not_metni) or yonetim_kelimesi(not_metni):
@@ -3471,9 +3522,9 @@ def hizli_alan(args, not_metni):
                 ben = kisi_eslestir(kisiler, login, [], git_eposta)[0]
             except Stop:  # depoyu okuyamıyor (GhHatasi) ya da kimlik çelişkisi (yazan yolu ayrıca durdurur)
                 kisiler, ben = {}, None
-    if not kisiler and zorla != "dogrudan" and anahtar_yolu().is_file() and cf_anahtari_mi():
+    if not kisiler and zorla != "dogrudan" and anahtar_yolu().is_file():
         try:
-            kim = kopru_cagir("kim")
+            kim = kopru_kim()
         except Stop:  # köprü şu an yanıt vermiyor: gönderimde aynı hata açıkça söylenir
             kim = None
         if kim:
@@ -3595,17 +3646,19 @@ def hizli(argv):
         kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar)
         dosyalama = YAZAN_DOSYALAMA if zil_cal(alan, notlar) else "bir sonraki turunda"
     else:
-        cf = cf_anahtari_mi()
-        if cf and kim is None:
-            kim = kopru_cagir("kim")
-        sinir = kopru_sinirlari(kim if cf else None)
+        kim = kim or kopru_kim()  # cf dışındaki dağıtımda önce kim (protokol); çalıştırmada bir kez
+        yeni = cf_anahtari_mi() or kopru_protokolu(kim) >= 2
+        sinir = kopru_sinirlari(kim)
         boyut_denetle(kaynaklar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])
         taslak, _ = taslak_dogrula(hizli_taslagi(haber), {}, None)
         ek = None
-        if cf:  # Worker: alan ve meta.json'un konu/açıklaması istemciden (Worker notu okumaz, akıtır)
+        if yeni:  # Worker / aktarıcı: alan ve meta.json'un konu/açıklaması istemciden (Worker notu okumaz, akıtır)
             konu, aciklama = not_ozeti(not_metni, dosyalar[0][2] if dosyalar else "")
             ek = {"alan": alan, "konu_satiri": konu, "aciklama": aciklama[:2000]}
-        kod, bas, bit, ozetler = kopru_gonder(taslak, kaynaklar, sinir, ek)
+            if "parca_bayt" in (kim.get("sinirlar") or {}):  # aktarıcının parça boyu Worker'ın yükleme belirtecine girer
+                ek["parca_bayt"] = sinir["parca_bayt"]
+        kod, bas, bit, ozetler = kopru_gonder(taslak, kaynaklar, sinir, ek,
+                                              parca_json=yeni and kim.get("parca_json") is True)
         klasor, adlar = bit.get("kayit") or bas.get("kayit"), [o["ad"] for o in ozetler]
         dosyalama = dosyalama_metni(bit.get("dosyalama") or bas.get("dosyalama"))
     gecmise_yaz(kod, alan, yol, slug, klasor)
@@ -3718,7 +3771,7 @@ def kur(argv):
         except Stop:
             yol_simdi = "kopru"
         try:
-            kim = kopru_cagir("kim", anahtar=anahtar_oku())
+            kim = kopru_kim(anahtar_oku())
         except KopruHatasi as e:
             return {"anahtar": True, "gecerli": False, "dosya_yeri": dosya_yeri, "yol": yol_simdi,
                     "uyari": f"Kayıtlı köprü anahtarı geçerli değil: {e}"}
@@ -3739,7 +3792,7 @@ def kur(argv):
                        "TF Bilgi botunun verdiği haliyle yapıştır (bota `anahtar` yaz)." if not bulunan else
                        "Metinde birden çok köprü anahtarı var; yalnız kendi anahtarını yapıştır.")
         anahtar = anahtar_coz(bulunan[0])
-        kim = kopru_cagir("kim", anahtar=anahtar)
+        kim = kopru_kim(anahtar)
         kisi = str(kim.get("kisi") or "")
         if not KISI_RE.match(kisi):
             raise Stop(KOPRU_YANIT_YOK)
@@ -3753,7 +3806,7 @@ def kur(argv):
             kaynak.unlink()
     ad = kim.get("ad") or kisi
     satir = (f"Köprü anahtarı kuruldu: {ad} ({kisi}). /paylas artık GitHub'sız çalışır; belgeler sana Slack'ten "
-             "bağlantıyla gelir." if cf_dagitim_mi(anahtar[0]) else
+             "bağlantıyla gelir." if cf_dagitim_mi(anahtar[0]) or kopru_protokolu(kim) >= 2 else
              f"Köprü anahtarı kuruldu: {ad} ({kisi}). /paylas ve /bilgi artık köprüden, GitHub'sız çalışır.")
     return {"kuruldu": True, "kisi": kisi, "ad": ad, "depo": kim.get("depo"), "yol": yol_sec(), "satir": satir}
 
@@ -3871,6 +3924,7 @@ KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim] [--haber simdi] [--otomati
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    _KIM_ONBELLEK.clear()
     if not argv or (argv[0] not in KOMUTLAR and argv[0] != "kb"):
         print(KULLANIM, file=sys.stderr)
         return 64

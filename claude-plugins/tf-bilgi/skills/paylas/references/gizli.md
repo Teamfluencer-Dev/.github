@@ -24,8 +24,8 @@ Turkish message: relay it as-is and stop. `TFB kb ...` passes kb.py through (0 o
 - **Area.** yönetim for these whole words: yönetim, yönetime, "yönetim için", yönetici,
   yöneticiler, yöneticilere, C-level, `--yonetim` (not compounds such as "hesap
   yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim paneli"); everything else is
-  ekip. Gizli mode needs the repo path (doğrudan) or an old köprü key; the TF Bilgi Worker
-  key (`tfb1.cf1.…`, from the Slack bot) does not take gizli shares: `hazirla` says so;
+  ekip. Gizli mode needs the repo path (doğrudan) or an old köprü key; the TF Bilgi bridge
+  key from the Slack bot (Worker or its Apps Script relay) does not take gizli shares: `hazirla` says so;
   relay it (the Slack bot keeps its own gizli mode). On the köprü path there is no
   yönetim: `hazirla --yonetim` refuses; relay it.
 - **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay the

@@ -272,6 +272,9 @@ class Base(unittest.TestCase):
         pin = mock.patch.object(tf_bilgi, "KB_SHA256", (STUB_SHA256,))
         pin.start()
         self.addCleanup(pin.stop)
+        ag = mock.patch.object(tf_bilgi.urllib.request, "urlopen", side_effect=AssertionError("testte ağ yok"))
+        ag.start()  # sahte köprü yamalanmadıysa gerçek köprüye (script.google.com, workers.dev) gidilmez
+        self.addCleanup(ag.stop)
         self.yorumlar = self.tmp / "yorumlar.json"
         self.yorumlar.write_text("[]")
         os.environ["FAKE_GH_YORUMLAR"] = str(self.yorumlar)
@@ -2930,7 +2933,9 @@ class HizliTest(Base):
             self.assertEqual(r["satir"], "Gönderildi ✓ G-abc000 · Çalışma.md + not · ekip · kütüphaneci yarın 09:05 turunda "
                                          "dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al G-abc000")
             islemler = [c["islem"] for c in kopru.cagrilar]
-            self.assertEqual((islemler[0], islemler[-1], set(islemler)), ("baslat", "bitir", {"baslat", "parca", "bitir"}))
+            self.assertEqual((islemler[:2], islemler[-1], set(islemler)),  # protokolsüz eski köprü: önce kim, eski akış
+                             (["kim", "baslat"], "bitir", {"kim", "baslat", "parca", "bitir"}))
+            self.assertNotIn("alan", kopru.islemler("baslat")[0])  # eski köprüye yeni alanlar gitmez
             self.assertEqual(kopru.islemler("baslat")[0]["taslak"], HIZLI_TASLAK)  # sözleşme: aynen bu taslak
             self.assertEqual(kopru.kayitlar["G-abc000"]["veri"],
                              {"govde.md": "Mert'e bilgi\n".encode(), "Calisma.md": "içerik GIZLI-ANAHTAR-1".encode()})
@@ -3201,8 +3206,9 @@ class HizliTest(Base):
         kopru = SahteKopru({})
         with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
             self.assertEqual(self.hizli(not_metni="ekip")["yol"], "kopru")  # ekipte köprü yine çalışır
-        (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + eski anahtar + yönetim
-        self.assertIn("Bu köprü anahtarı eski: yönetime gönderemez", self.stop("hizli", "--yonetim", stdin="yönetim"))
+            (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + eski anahtar (protokolsüz) + yönetim
+            self.assertIn("Bu köprü anahtarı eski: yönetime gönderemez",
+                          self.stop("hizli", "--yonetim", stdin="yönetim"))
 
     # --- 0.9.0: bağlantılar notta, zil, alan kuralı ---
 
@@ -3591,6 +3597,122 @@ class WorkerKopruTest(Base):
         code, out = self.run_main("hizli", stdin="not")
         self.assertEqual((code, out), (2, "Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, "
                                           "sonra /paylas'ı tekrar dene.\n"))
+
+
+
+AKTARICI_DAGITIM = "AKfycbAktariciSahte_0123-456789"
+AKTARICI_ANAHTAR = f"tfb1.{AKTARICI_DAGITIM}.{KOPRU_CF_GIZLI}"  # gizli kısım dağıtımdan bağımsız
+AKTARICI_ADRES = f"https://script.google.com/macros/s/{AKTARICI_DAGITIM}/exec"
+
+
+class SahteAktarici(SahteWorker):
+    """Türkiye'den *.workers.dev engelli: Apps Script ince aktarıcısı (protokol 2). Parçalar JSON/base64 `parca` ile
+    gelir (ham gövde yok), parça boyu kim'de 3 MB; Worker'a ulaşamazsa `kod: drive`."""
+
+    def __init__(self):
+        super().__init__()
+        self.parca_bayt = 3 * 1048576
+
+    def i_kim(self, g):
+        return {**super().i_kim(g), "protokol": 2, "parca_json": True}
+
+    def i_baslat(self, g):
+        assert g["parca_bayt"] == 3 * 1048576  # istemci kim'deki parça boyunu bildirir
+        return super().i_baslat(g)
+
+    def i_parca(self, g):
+        _, kod, ad = g["yukleme"].split("|")
+        sira = g["sira"]
+        if self.parca_drive.get((ad, sira)):
+            self.parca_drive[(ad, sira)] -= 1
+            raise KopruRet("TF Bilgi köprüsü Worker'a ulaşamadı; aynı parçayı yeniden gönder.", "drive")
+        veri = base64.b64decode(g["veri"])
+        self.parcalar.append((ad, sira, len(veri)))
+        k = self.kayitlar[kod]
+        if sira >= k["sira"].get(ad, 0):
+            assert sira == k["sira"].get(ad, 0), "sıra dışı parça"
+            k["veri"][ad] += veri
+            k["sira"][ad] = sira + 1
+        alinan = len(k["veri"][ad])
+        return {"kod": kod, "ad": ad, "sira": sira, "alinan": alinan, "bitti": alinan == k["beyan"][ad]["boyut"]}
+
+    def __call__(self, adres, veri, zaman_asimi):
+        try:
+            return super().__call__(adres, veri, zaman_asimi)
+        except KopruRet as e:
+            return self.yanit(self.red(*e.args))
+
+    def ham(self, adres, veri, basliklar, zaman_asimi):
+        raise AssertionError("aktarıcıya ham parça gitmez")
+
+
+class AktariciKopruTest(WorkerKopruTest):
+    """Protokol 2: Apps Script aktarıcısı (script.google.com) → Worker. WorkerKopruTest'in yardımcılarını kullanır."""
+
+    def setUp(self):
+        super().setUp()
+        self.worker = SahteAktarici()
+        for ad, deger in (("kopru_tasi", self.worker), ("kopru_ham_tasi", self.worker.ham)):
+            yama = mock.patch.object(tf_bilgi, ad, deger)
+            yama.start()
+            self.addCleanup(yama.stop)
+        (self.cache / "anahtar").write_text(AKTARICI_ANAHTAR + "\n")
+
+    # WorkerKopruTest'in cf1'e özgü testleri burada çalışmaz: yalnız aşağıdakiler
+    test_anahtar_bicimi_ve_adres = test_paylas_ham_parcalar_ve_makbuz = test_parca_yeniden_denenir_kalici_hata_geri_alir = None
+    test_kopru_url_ezer_ve_ayar_hatasi_aynen = test_kur_cf1_anahtari = test_okuma_desteklenmiyor_sade_cumle = None
+
+    def test_aktarici_json_parcalar_uc_uca(self):
+        buyuk = bytes(range(256)) * (3 * 4096 + 17)  # 3 MB'tan büyük: 2 parça
+        dosya = self.ek("sunum.pdf", buyuk)
+        self.worker.parca_drive[("sunum.pdf", 1)] = 1  # aktarıcı Worker'a ulaşamadı: aynı sıra yeniden gider
+        r = self.ok("hizli", "--ek", dosya, stdin="Dilara'ya sunum\n")
+        kod = r["kod"]
+        self.assertEqual((r["yol"], r["alan"], r["alicilar"]), ("kopru", "yonetim", ["dilara"]))
+        self.assertIn(" · yönetim · kütüphaneci 10 dk içinde dosyalar", r["satir"])
+        self.assertEqual(set(self.worker.adresler), {AKTARICI_ADRES})  # yalnız script.google.com
+        islemler = [c["islem"] for c in self.worker.cagrilar]
+        self.assertEqual(islemler.count("kim"), 1)  # kim bir çalıştırmada bir kez
+        self.assertEqual([i for i in islemler if i != "parca"], ["kim", "baslat", "bitir"])
+        b = self.worker.islemler("baslat")[0]
+        self.assertEqual((b["alan"], b["konu_satiri"], b["parca_bayt"], b["taslak"]),
+                         ("yonetim", "Dilara'ya sunum", 3 * 1048576, HIZLI_TASLAK))
+        parcalar = [(c["yukleme"].split("|")[2], c["sira"]) for c in self.worker.islemler("parca")]
+        self.assertEqual(parcalar, [("govde.md", 0), ("sunum.pdf", 0), ("sunum.pdf", 1), ("sunum.pdf", 1)])
+        self.assertTrue(all(c["anahtar"] == KOPRU_CF_GIZLI and c["s"] == 1 for c in self.worker.islemler("parca")))
+        self.assertEqual([n for a, _, n in self.worker.parcalar if a == "sunum.pdf"],
+                         [3 * 1048576, len(buyuk) - 3 * 1048576])
+        self.assertEqual(self.worker.kayitlar[kod]["veri"]["sunum.pdf"], buyuk)
+        self.assertEqual(self.worker.islemler("bitir")[0]["durum"], f"durum|{kod}")
+        self.assertTrue(self.worker.kayitlar[kod]["bitti"])
+
+    def test_aktarici_okuma_ve_yol(self):
+        self.assertEqual(self.stop("hazirla").strip(), OKUMA_YOK)  # kim protokol 2 → sade cümle
+        self.assertIn("yalnız /paylas çalışır", self.stop("hazirla", "--yazma"))
+        self.assertEqual(self.stop("ara", "abonelik").strip(), OKUMA_YOK)
+        self.assertIn("yalnız /paylas çalışır", self.stop("gonder", "--taslak", "/x/taslak.json"))
+        os.environ["FAKE_GH_LOGIN"] = "mert-gh"
+        self.assertEqual(tf_bilgi.yol_sec(), "dogrudan")  # yeni köprü + GitHub girişi: okuma doğrudan
+        os.environ["FAKE_GH_LOGIN"] = ""
+        self.worker.cagrilar.clear()
+        r = self.ok("hizli", "--yonetim", stdin="bütçe")  # aktarıcı anahtarı yönetime de gönderir
+        self.assertEqual((r["alan"], self.worker.islemler("baslat")[0]["alan"]), ("yonetim", "yonetim"))
+        self.assertEqual(len(self.worker.islemler("kim")), 1)
+
+    def test_kur_aktarici_anahtari(self):
+        (self.cache / "anahtar").unlink()
+        dosya = self.cache / "gecici" / "anahtar.txt"
+        dosya.parent.mkdir(parents=True, exist_ok=True)
+        dosya.write_text(AKTARICI_ANAHTAR + "\n")
+        r = self.ok("kur", "--dosya", str(dosya))
+        self.assertIn("belgeler sana Slack'ten bağlantıyla gelir", r["satir"])
+        self.assertEqual(self.worker.adresler, [AKTARICI_ADRES])
+        self.assertEqual(len(self.worker.islemler("kim")), 1)
+
+    def test_kim_onbellegi_calistirma_basina(self):
+        self.ok("hizli", "--ekip", stdin="bir")
+        self.ok("hizli", "--ekip", stdin="iki")
+        self.assertEqual(len(self.worker.islemler("kim")), 2)  # her çalıştırma bir kez sorar, aralarında saklanmaz
 
 
 if __name__ == "__main__":
