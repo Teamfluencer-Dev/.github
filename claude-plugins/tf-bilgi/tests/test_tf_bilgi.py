@@ -3301,6 +3301,31 @@ class HizliTest(Base):
         g = self.ok("geri-al", kod)
         self.assertEqual((g["sonuc"], g["yol"]), ("silindi", "gelen"))
 
+    def test_gelen_kisiler_duzelince_ayni_gun_gecer(self):
+        """review #14 (N1): Enes kisiler.json'a github hesabını ekleyince bir gün beklemeden paylaşılır."""
+        self.gelen_kur()
+        os.environ.update({"FAKE_GH_LOGIN": "yeni-gh", "TF_BILGI_KISI": "mert"})
+        self.assertIn("GitHub hesabın (yeni-gh)", self.stop("hizli", stdin="ilk deneme"))
+        duzeltilmis = json.loads(json.dumps(KISILER))
+        duzeltilmis["kisiler"]["mert"]["github"] = "yeni-gh"
+        self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(duzeltilmis, ensure_ascii=False)})
+        r = self.hizli(not_metni="ikinci deneme")
+        self.assertEqual((r["yol"], json.loads(self.kayit(self.GELEN, r["kod"])["meta.json"])["gonderen"]),
+                         ("gelen", "mert"))
+
+    def test_gelen_deposu_gorunmuyorsa_ve_kopru_anahtariyla(self):
+        self.gelen_kur()
+        os.environ["FAKE_GH_404_DEPOLAR"] = "tf-bilgi-gelen"  # gelen deposu yok ya da üye eklenmedi
+        self.assertIn("tf-bilgi-gelen) yazma yetkisi olmalı", self.stop("hizli", stdin="not"))
+        del os.environ["FAKE_GH_404_DEPOLAR"]
+        (self.cache / "hizli.json").unlink()
+        self.anahtar_kur()
+        kopru = SahteKopru({})
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
+            r = self.hizli(not_metni="anahtarı da var")
+        self.assertEqual(r["yol"], "gelen")  # GitHub yolu köprüden önce gelir
+        self.assertEqual(kopru.islemler("baslat"), [])
+
 
 class HizliYardimciTest(unittest.TestCase):
     def test_gh_api_komutu_govde_stdin_ve_http_kodu(self):

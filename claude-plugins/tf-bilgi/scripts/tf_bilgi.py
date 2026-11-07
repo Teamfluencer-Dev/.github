@@ -104,8 +104,10 @@ Köprü (bridge) path, 0.6.0. A person with a köprü key (~/.tf-bilgi/anahtar, 
 pasted string `tfb1.<deployment>.<secret>`) works without GitHub: the TF Bilgi
 bridge (a Google Apps Script web app) writes shares into the Google Drive inbox
 the librarian files from, and serves reads (allow-listed files, search, comment
-pages, preferences). The path is `TF_BILGI_YOL` (kopru | dogrudan) or, when unset,
-köprü if the key file exists, else the direct (GitHub) path above.
+pages, preferences). For /paylas (hizli, geri-al) a GitHub route wins when it works: writer
+(KB push) > inbox repo tf-bilgi-gelen (ekip members, 0.8.0) > köprü key. For the other
+commands the path is `TF_BILGI_YOL` (kopru | dogrudan) or, when unset, köprü if the key
+file exists, else the direct (GitHub) path above.
 
   kur [--dosya F | --sil]        Install the key from F (under <cache>/gecici/, written
                                  with the Write tool; never a shell argument), check it
@@ -120,8 +122,9 @@ köprü if the key file exists, else the direct (GitHub) path above.
   geri-al HEDEF                  Withdraw a share (G-…) or one's own entry (B-…). A writer's
                                  own hızlı share still in 00-gelen/ is removed in one commit;
                                  once filed, a geri-al record is written for the librarian;
-                                 someone else's code is refused.
-                                 Otherwise through the bridge (köprü key).
+                                 someone else's code is refused. An inbox-repo (tf-bilgi-gelen)
+                                 share is removed there if not yet moved, else a geri-al record
+                                 is written there. Otherwise through the bridge (köprü key).
   oku YOL...                     Köprü: allow-listed repo files (gizli entries only for
                                  their recipients).
   ara SORGU...                   Köprü: search entries.
@@ -2875,8 +2878,9 @@ def hizli_push(slug):
 
 
 def hizli_yetki(login, slug, yenile=False):
-    """(push yetkisi True/False/None, önbellekten mi). `gh api repos/<slug> --jq .permissions.push` (yazma_yetkisi);
-    kesin yanıt bir gün önbellekte durur, denetlenemeyen (None: ağ, depo yok) yazılmaz."""
+    """(push yetkisi True/False/None, önbellekten mi). `gh api repos/<slug> --jq .permissions.push` (hizli_push);
+    kesin yanıt bir gün önbellekte durur: depo görünmüyorsa (HTTP 404) False da. Denetlenemeyen (None: ağ, başka hata)
+    yazılmaz. Önbellekteki False, başka yol yoksa bir kez taze denetlenir (hizli_yol)."""
     anahtar = f"{login.lower()}|{slug.lower()}"
     kayit = _bolum(hizli_onbellek(), "yetki").get(anahtar)
     if not yenile and _taze(kayit) and isinstance(kayit.get("push"), bool):
@@ -3080,8 +3084,8 @@ def geri_al_kaydi(slug, alan, kisi, login, kod):
 
 def geri_al_yazan(kod):
     """Yazanın kendi hızlı kaydı (G-…): 00-gelen'de duruyorsa (dosyalanmadı) klasörü tek commit'le kaldırır; dosyalandıysa
-    (arsiv/00-gelen) geri-al kaydı yazar. Kod başkasının kaydıysa durur: yalnız kendi paylaşımın geri alınır. Yazan değilse
-    ya da kod köprüden gittiyse None (köprü akışı sürer)."""
+    (arsiv/00-gelen) geri-al kaydı yazar. Kod başkasının kaydıysa durur: yalnız kendi paylaşımın geri alınır. Yazan değil
+    ama gelen deposuna yazabiliyorsa geri_al_gelen. İkisi de değilse ya da kod köprüden gittiyse None (köprü akışı sürer)."""
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
     if zorla == "kopru" or not which("gh"):
         return None
@@ -3261,6 +3265,11 @@ def hizli_taslagi(haber):
             "gizli_link": None, "notlar": []}
 
 
+def gh_hesabi_mi(slug, kisi, login):
+    """kisiler.json'da (önbellek) kişinin `github`'ı bu gh girişi mi (gelen yolunun kimlik koşulu)."""
+    return str((hizli_kisiler(slug).get(kisi) or {}).get("github") or "").lower() == str(login or "").lower()
+
+
 def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar, kisi_slug=None):
     """Yazan: tek API commit'i → (kod, klasör, kayıttaki adlar). Gelen deposunda kişi ekip deposunun kisiler.json'undan
     bulunur (kisi_slug; gelen deposunda kisiler.json yok)."""
@@ -3268,8 +3277,11 @@ def hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notl
     adlar = (["govde.md"] if notlu else []) + [ad for ad, _, _ in dosyalar]
     try:
         kisi = hizli_kisi(kisi_slug or slug, login, notlar)
-        if kisi_slug and str((hizli_kisiler(kisi_slug).get(kisi) or {}).get("github") or "").lower() != login.lower():
-            raise Stop(GELEN_KIMLIK.format(login=login))  # aktarım `gonderen_ham`'ı kişinin GitHub hesabıyla denetler
+        if kisi_slug and not gh_hesabi_mi(kisi_slug, kisi, login):
+            hizli_kisiler(kisi_slug, yenile=True)  # kisiler.json bugün düzeltilmiş olabilir: önbellek bir kez tazelenir
+            kisi = hizli_kisi(kisi_slug, login, notlar)
+            if not gh_hesabi_mi(kisi_slug, kisi, login):
+                raise Stop(GELEN_KIMLIK.format(login=login))  # aktarım `gonderen_ham`'ı kişinin GitHub hesabıyla denetler
         an, kimlik = an_tr(), yeni_kimlik()
         kod = f"G-{kimlik}"
         klasor = f"{GELEN}/{an:%Y%m%d-%H%M%S}-{kisi}-{kimlik}"
