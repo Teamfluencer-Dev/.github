@@ -13,8 +13,10 @@ YAZAN_BECERILER = ("paylas", "toplu-paylas")
 PAYLAS = PLUGIN / "skills" / "paylas" / "SKILL.md"
 GIZLI = PLUGIN / "skills" / "paylas" / "references" / "gizli.md"
 PR_LISTESI = PLUGIN / "skills" / "paylas" / "references" / "pr-listesi.md"
-HIZLI_KOMUTU = ('`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] '
+HIZLI_KOMUTU = ('`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] [--otomatik] '
                 "--not-dosya '<note path>' --ek '<path>' ...`")
+YONETIM_SOZLERI = ('yönetim, yönetime, "yönetim için", yönetici,', "yöneticiler, yöneticilere, C-level, `--yonetim`")
+YONETIM_DEGIL = ('"hesap yöneticisi"', '"proje yöneticisi"', '"yöneticisine"', '"yönetim paneli"')
 
 
 def metin(md):
@@ -173,7 +175,7 @@ class SkillShellHygieneTest(unittest.TestCase):
         """7 Kas kararı: /paylas Slack'ten hızlı; okumaz, özetlemez, taslak yazmaz, hiçbir şey sormaz."""
         paylas = metin(PAYLAS)
         govde = paylas.split("\n---\n", 1)[1]
-        self.assertLessEqual(len(govde.encode("utf-8")), 3200, "SKILL.md gövdesi kısa kalmalı")
+        self.assertLessEqual(len(govde.encode("utf-8")), 3400, "SKILL.md gövdesi kısa kalmalı")
         self.assertNotIn("AskUserQuestion", paylas)
         for yasak in ("KONULAR.md", "kisiler.json", "eslestir", "kb tara", "taslak", "hazirla", "Onayla", "Düzelt",
                       "TFB gonder", "TFB yaz", "TFB kaydet", "bildirim-plani", "maskele"):
@@ -187,8 +189,11 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_paylas_areas_modes_and_targets(self):
         paylas = metin(PAYLAS)
         adim5 = paylas.split("\n5. ", 1)[1].split("\n6. ", 1)[0]
-        for soz in ('"yönetim"', '"yönetici"', '"yönetime"', '"C-level"', "`--yonetim`"):
-            self.assertIn(soz, adim5.split("--haber simdi` when", 1)[0], soz)
+        gizli = metin(GIZLI)
+        for govde in (adim5, gizli):  # review: "hesap yöneticisi" gibi tamlamalar yönetime göndermez
+            duz = " ".join(govde.split())
+            for parca in YONETIM_SOZLERI + YONETIM_DEGIL:
+                self.assertIn(parca, duz, parca)
         self.assertIn('`--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver"', adim5)
         adim2 = paylas.split("\n2. ", 1)[1].split("\n3. ", 1)[0]
         self.assertIn("references/gizli.md", adim2)
@@ -196,7 +201,10 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("only when explicitly asked", adim2)
         adim3 = paylas.split("\n3. ", 1)[1].split("\n4. ", 1)[0]
         self.assertIn("never open it", adim3)
-        self.assertIn("most recently created, wrote,\n     exported or published", adim3)
+        self.assertIn("this conversation's own deliverable (artifact HTML, PDF, report, deck): pass\n     `--otomatik`",
+                      adim3)  # review: yol verilmeden seçilen dosya yalnız belge; helper başkasını reddeder
+        self.assertIn("never source code, config or dotfiles", adim3)
+        self.assertIn("it names the files sent", paylas)
         self.assertIn("Write that\n     text verbatim to `~/.tf-bilgi/gecici/paylas-<YYYYMMDD-HHMMSS>.md`", adim3)
         for yol in (GIZLI, PR_LISTESI):
             self.assertTrue(yol.is_file(), yol)
@@ -232,7 +240,8 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_readme_describes_the_instant_share(self):
         readme = (PLUGIN.parents[1] / "README.md").read_text(encoding="utf-8")
         for parca in ("eneskrblt/tf-bilgi-yonetim", "`00-gelen/`", "Git Data API", "geri-al",
-                      "Sır ve kişisel veri paylaşımı engellemez", "`--not-dosya`", "heredoc yok",
+                      "Sır ve kişisel veri paylaşımı engellemez", "`--not-dosya`", "heredoc yok", "`--otomatik`",
+                      "Bu kod senin paylaşımın değil.", "git geçmişinde durur",
                       "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir."):
             self.assertIn(parca, readme, parca)
         self.assertNotIn("Teamfluencer-Dev/tf-bilgi-yonetim", readme)

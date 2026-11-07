@@ -119,25 +119,36 @@ açmaz, okumaz, özetlemez, taslak yazmaz ve hiçbir şey sormaz. Tek komut
 bırakır, tek satır makbuz verir:
 
 ```
-Gönderildi ✓ G-ab12cd · 2 dosya + not · ekip · kütüphaneci bugün 13:05 turunda dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al G-ab12cd
+Gönderildi ✓ G-ab12cd · rapor.html, ozet.md + not · ekip · kütüphaneci bugün 13:05 turunda dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al G-ab12cd
 ```
 
 Türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci bir sonraki turunda (hafta içi 09:05,
-11:05, 13:05, 15:05, 17:05) çıkarır. Yol verilmezse bu konuşmada son üretilen dosya ya da
-artifact, "bu özeti paylaş" denirse o metin (Write ile `~/.tf-bilgi/gecici/`'ye yazılıp)
-paylaşılır. Yol yardımcıda seçilir:
+11:05, 13:05, 15:05, 17:05) çıkarır. Makbuz gönderilen dosyaların adlarını söyler (uzunsa
+kısaltılır, 3'ten fazlası "+N dosya"). Yol verilmezse bu konuşmanın kendi çıktısı (artifact
+HTML, PDF, rapor) `--otomatik` ile gider: yardımcı o zaman yalnız belge benzeri dosyaları
+(html/htm, pdf, md, txt, docx, pptx, xlsx, csv, png/jpg/jpeg/gif/webp) kabul eder; kod,
+ayar, anahtar, uzantısız ya da `.` ile başlayan dosyada "Hangi dosyayı paylaşacağımı
+bilemedim; dosya yolunu yaz: /paylas <dosya> …" der. Açıkça verilen yol her türde çalışır.
+"Bu özeti paylaş" denirse o metin Write ile `~/.tf-bilgi/gecici/`'ye yazılıp paylaşılır.
+Yol yardımcıda seçilir:
 
 | Kim | Ne olur |
 |---|---|
 | Depoya yazabilen (push yetkisi; `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
 | Yazamayan, köprü anahtarı olan | Köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar); yalnız ekip alanı |
 | İkisi de yok | Durur: "dosyayı Slack'te TF Bilgi botuna DM at; anahtar için Enes'e yaz, sonra /bilgi kur" |
+| `gh` kurulu ama oturum kapalı ya da bağlantı yok (anahtar yoksa; yönetimde bu makinede yazan görülmüşse anahtar olsa da) | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
 
-Sözlerde "yönetim", "yönetici", "yönetime", "C-level" ya da `--yonetim` geçerse paylaşım
-yönetim alanına gider (köprüde yönetim yok: Slack botuna "yönetim" yazarak gönderilir);
-"acil", "hemen haber ver" → `haber: simdi`. `/paylas geri-al <kod>`: yazanın kaydı henüz
-`00-gelen/`'deyse tek commit'le silinir, dosyalandıysa kütüphaneciye geri-al kaydı yazılır;
-köprü kodları bugünkü gibi köprüden geri alınır. Gizli kip ve PR listesi ayrı başvuru
+Sözlerde tam kelime olarak yönetim, yönetime, "yönetim için", yönetici, yöneticiler,
+yöneticilere, C-level ya da `--yonetim` geçerse paylaşım yönetim alanına gider ("hesap
+yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim paneli" gibi tamlamalar değil;
+köprüde yönetim yok: Slack botuna "yönetim" yazarak gönderilir); "acil", "hemen haber ver"
+→ `haber: simdi`. `/paylas geri-al <kod>` yalnız kendi paylaşımını geri alır: yazanın
+kaydı henüz `00-gelen/`'deyse tek commit'le kaldırılır ("içerik git geçmişinde durur;
+gerekiyorsa Enes'e haber ver"), dosyalandıysa (`arsiv/00-gelen/`) kütüphaneciye geri-al
+kaydı yazılır; kod başkasının kaydıysa "Bu kod senin paylaşımın değil." der ve hiçbir şey
+yazmaz (kütüphaneci de GOREV 2.G.0'da hedef klasörün `-<gonderen>-<kimlik>` olmasını
+şart koşar). Köprü kodları bugünkü gibi köprüden geri alınır. Gizli kip ve PR listesi ayrı başvuru
 dosyalarındadır (`skills/paylas/references/`), yalnız açıkça istenince okunur.
 
 0.6.0'dan beri iki yol var (gizli paylaşım, `/toplu-paylas`, `/bilgi`):

@@ -21,8 +21,10 @@ Turkish message: relay it as-is and stop. `TFB kb ...` passes kb.py through (0 o
 - **Only new files.** The repo is changed only through `TFB yaz` and `TFB kaydet`
   (doğrudan) or `TFB gonder` (köprü). Never Write/Edit in the cache clone or the köprü
   mirror, never run git yourself. `yazar` is the resolved person key, never `claude`.
-- **Area.** yönetim when the user's words contain "yönetim", "yönetici", "yönetime",
-  "C-level" or `--yonetim`; everything else is ekip. On the köprü path there is no
+- **Area.** yönetim for these whole words: yönetim, yönetime, "yönetim için", yönetici,
+  yöneticiler, yöneticilere, C-level, `--yonetim` (not compounds such as "hesap
+  yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim paneli"); everything else is
+  ekip. On the köprü path there is no
   yönetim: `hazirla --yonetim` refuses; relay it.
 - **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay the
   message as-is and stop. Keep `yol` (`kopru` or `dogrudan`), `kok` (on the köprü path the

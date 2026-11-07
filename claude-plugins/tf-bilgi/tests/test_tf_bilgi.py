@@ -142,6 +142,9 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
                           "incomplete_results": bool(os.environ.get("FAKE_GH_ARAMA_EKSIK"))}))
         sys.exit(0)
     if len(parca) == 3:  # repos/<sahip>/<ad>: push yetkisi
+        if os.environ.get("FAKE_GH_REPO_404"):  # depo bu hesaba görünmüyor (private, erişim yok)
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
         cik("FAKE_GH_REPO_CIKIS")
         print(os.environ.get("FAKE_GH_PUSH", "true"))
         sys.exit(0)
@@ -276,7 +279,8 @@ class Base(unittest.TestCase):
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
                      "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
                      "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
-                     "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS", "TF_BILGI_YOL", "TF_BILGI_KOPRU_URL"):
+                     "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS", "TF_BILGI_YOL", "TF_BILGI_KOPRU_URL",
+                     "FAKE_GH_REPO_404"):
             os.environ.pop(name, None)
         for key, value in (("user.name", "Test"), ("user.email", "test@ornek.test"),
                            ("init.defaultBranch", "main"), ("commit.gpgsign", "false")):
@@ -1700,7 +1704,13 @@ class YorumTest(Base):
     def test_yonetim_deposuna_erisimi_olmayan(self):
         del os.environ["TF_BILGI_UZAK_YONETIM"]  # varsayılan GitHub deposu; okuma yetkisi yok (repos/<depo> 404)
         self.set_git_config(f"url.{self.bare['yonetim']}.insteadOf", "https://github.com/eneskrblt/tf-bilgi-yonetim.git")
-        os.environ["FAKE_GH_REPO_CIKIS"] = "1"
+        os.environ["FAKE_GH_REPO_CIKIS"] = "1"  # geçici hata (HTTP 500): "erişimin yok" denmez, tekrar dene denir
+        out = self.stop("yorumlar", "BY-20261029-ayse-01")
+        self.assertIn("Yönetim deposuna erişimin denetlenemedi", out)
+        self.assertNotIn("yalnız yönetim deposuna erişimi olanlar", out)
+        self.assertFalse(self.kok("yonetim").exists())
+        del os.environ["FAKE_GH_REPO_CIKIS"]
+        os.environ["FAKE_GH_REPO_404"] = "1"
         for argv in (("yorum", "BY-20261029-ayse-01", "--dosya", self.dosya, "--gonder"),
                      ("yorum", YORUM_GIRDI, "--yonetim", "--dosya", self.dosya),
                      ("yorumlar", "BY-20261029-ayse-01"), ("yorumlar", YORUM_GIRDI, "--yonetim")):
@@ -1708,7 +1718,7 @@ class YorumTest(Base):
                              argv)
         self.assertFalse(self.kok("yonetim").exists())  # klonlanmadı
         self.assertEqual([c for c in self.api_cagrilari() if "issues" in " ".join(c)], [])  # sayfa aranmadı, yazılmadı
-        del os.environ["FAKE_GH_REPO_CIKIS"]  # erişim gelince aynı varsayılan depodan klonlanır
+        del os.environ["FAKE_GH_REPO_404"]  # erişim gelince aynı varsayılan depodan klonlanır
         self.yonetim_girdisi()
         self.assertEqual(self.ok("yorumlar", YONETIM_GIRDI)["toplam"], 0)
         self.assertTrue(self.kok("yonetim").is_dir())
@@ -2134,8 +2144,11 @@ class KopruTest(Base):
         os.environ["TF_BILGI_YOL"] = "dogrudan"  # doğrudan yolu seçen yazan da kendi girdisini köprüyle geri alır
         self.assertEqual(self.ok("geri-al", "B-20261105-mert-01")["sonuc"], "kaydedildi")
         (self.cache / "anahtar").unlink()
-        self.assertIn("köprü anahtarın yok", self.stop("geri-al", "G-abc123"))
-        self.assertIn("köprü anahtarın yok", self.stop("geri-al", "B-20261105-mert-01"))
+        # G- kodu: gh kurulu ama oturum kapalı ve anahtar yok → hizli ile aynı: oturum mesajı (yazanın kodu olabilir)
+        self.assertIn("GitHub oturumun kapalı ya da bağlantı yok", self.stop("geri-al", "G-abc123"))
+        with mock.patch.object(tf_bilgi, "which", lambda ad: None if ad == "gh" else shutil.which(ad)):
+            self.assertIn("köprü anahtarın yok", self.stop("geri-al", "G-abc123"))  # gh hiç yok: köprü mesajı
+        self.assertIn("köprü anahtarın yok", self.stop("geri-al", "B-20261105-mert-01"))  # girdi kimliği: yalnız köprü
         # anahtarsız doğrudan yolda makbuz geri-al vaat etmez: hazirla geri_al=false (KopruDogrudanYolTest, hijyen testi)
 
     def test_okuma_ara_girdi_alindi(self):
@@ -2599,6 +2612,30 @@ class SahteGitHub:
                 harita[y] = self._blob(d, self._bayt(v))
         d["ref"] = self._commit(d, self._tree(d, harita), [d["ref"]], mesaj)
 
+    def klasor_sha(self, agac, yol):
+        sha = hashlib.sha1(f"{agac}:{yol}".encode()).hexdigest()
+        self.klasorler[sha] = (agac, yol)
+        return sha
+
+    def agac_ogeleri(self, d, agac, onek, ozyineli):
+        """Düz haritadan git trees API görünümü: onek klasörünün doğrudan (ya da özyineli) öğeleri."""
+        on = onek + "/" if onek else ""
+        ogeler, klasorler = [], set()
+        for y, sha in sorted(d["trees"][agac].items()):
+            if not y.startswith(on):
+                continue
+            kalan = y[len(on):]
+            parcalar = kalan.split("/")
+            if ozyineli:
+                ogeler.append({"path": kalan, "mode": "100644", "type": "blob", "sha": sha})
+                klasorler.update("/".join(parcalar[:i + 1]) for i in range(len(parcalar) - 1))
+            elif len(parcalar) > 1:
+                klasorler.add(parcalar[0])
+            else:
+                ogeler.append({"path": kalan, "mode": "100644", "type": "blob", "sha": sha})
+        return ogeler + [{"path": k, "mode": "040000", "type": "tree", "sha": self.klasor_sha(agac, on + k)}
+                         for k in sorted(klasorler)]
+
     @staticmethod
     def atalar(d, c):
         gorulen = set()
@@ -2635,22 +2672,14 @@ class SahteGitHub:
                     cocuklar[kalan.split("/")[0]] = "dir" if "/" in kalan else "file"
             if not cocuklar:
                 raise tf_bilgi.GhHatasi("gh: Not Found (HTTP 404)", 404)
-            liste = []
-            for ad, tur in sorted(cocuklar.items()):
-                yol_ = f"{hedef}/{ad}"
-                if tur == "dir":
-                    sha = hashlib.sha1(f"{c}:{yol_}".encode()).hexdigest()
-                    self.klasorler[sha] = (c, yol_)
-                else:
-                    sha = harita[yol_]
-                liste.append({"name": ad, "path": yol_, "type": tur, "sha": sha})
-            return liste
+            agac = d["commits"][c]["tree"]
+            return [{"name": ad, "path": f"{hedef}/{ad}", "type": tur,
+                     "sha": self.klasor_sha(agac, f"{hedef}/{ad}") if tur == "dir" else harita[f"{hedef}/{ad}"]}
+                    for ad, tur in sorted(cocuklar.items())]
         if yontem == "GET" and r[:2] == ["git", "trees"]:
-            c, onek = self.klasorler[r[2]]
-            assert "recursive=1" in sorgu
+            agac, onek = (r[2], "") if r[2] in d["trees"] else self.klasorler[r[2]]
             return {"sha": r[2], "truncated": False,
-                    "tree": [{"path": y[len(onek) + 1:], "mode": "100644", "type": "blob", "sha": s}
-                             for y, s in d["trees"][d["commits"][c]["tree"]].items() if y.startswith(onek + "/")]}
+                    "tree": self.agac_ogeleri(d, agac, onek, ozyineli="recursive=1" in sorgu)}
         if yontem == "POST" and r == ["git", "blobs"]:
             assert govde["encoding"] == "base64"
             return {"sha": self._blob(d, base64.b64decode(govde["content"]))}
@@ -2746,7 +2775,7 @@ class HizliTest(Base):
         self.assertRegex(kod, r"^G-[a-z0-9]{6}$")
         self.assertEqual((r["alan"], r["yol"], r["dosyalar"], r["notlar"]),
                          ("ekip", "writer", ["govde.md", "Calisma-Notu.pdf", "rapor.md"], []))
-        self.assertEqual(r["satir"], f"Gönderildi ✓ {kod} · 2 dosya + not · ekip · kütüphaneci bugün 13:05 turunda "
+        self.assertEqual(r["satir"], f"Gönderildi ✓ {kod} · Çalışma Notu.pdf, rapor.md + not · ekip · kütüphaneci bugün 13:05 turunda "
                                      f"dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al {kod}")
         kayit = self.kayit(self.EKIP, kod)
         self.assertEqual(sorted(kayit), ["Calisma-Notu.pdf", "govde.md", "meta.json", "rapor.md"])
@@ -2785,7 +2814,7 @@ class HizliTest(Base):
         r3 = self.hizli("--ek", pdf)
         self.assertEqual(len(self.yetki_cagrilari(self.EKIP)), 2)
         self.assertEqual(json.loads(self.kayit(self.EKIP, r3["kod"])["meta.json"])["konu_satiri"], "Çalışma Notu.pdf")
-        self.assertIn(" · 1 dosya · ekip · ", r3["satir"])
+        self.assertIn(" · Çalışma Notu.pdf · ekip · ", r3["satir"])
 
     def test_not_dosyasi_tek_satir_komut(self):
         """Skill notu Write ile gecici/'ye yazar ve tek satırlık komuta --not-dosya ile verir (heredoc yok); dosya
@@ -2844,7 +2873,7 @@ class HizliTest(Base):
         self.assertEqual(sorted(kayit), sorted(beklenen + ["meta.json"]))
         self.assertEqual(kayit["meta-2.json"], b"meta.json")  # kullanıcının meta.json'u kaydın meta'sını ezmez
         self.assertEqual(json.loads(kayit["meta.json"])["mesaj_kimligi"], r["kod"])
-        self.assertIn(" · 9 dosya + not · ", r["satir"])
+        self.assertIn(" · Çalışma Notu.pdf, Şeker Ölçüm.xlsx, meta.json +6 dosya + not · ", unicodedata.normalize("NFC", r["satir"]))
 
     def test_boyut_sinirlari_agdan_once(self):
         with mock.patch.object(tf_bilgi, "HIZLI_DOSYA_AZAMI", 10), mock.patch.object(tf_bilgi, "HIZLI_KAYIT_AZAMI", 15):
@@ -2885,7 +2914,7 @@ class HizliTest(Base):
             r = self.hizli("--ek", self.ek("Çalışma.md", "içerik GIZLI-ANAHTAR-1"), not_metni="Mert'e bilgi\n")
             self.assertEqual((r["kod"], r["yol"], r["alan"], r["dosyalar"]),
                              ("G-abc000", "kopru", "ekip", ["govde.md", "Calisma.md"]))
-            self.assertEqual(r["satir"], "Gönderildi ✓ G-abc000 · 1 dosya + not · ekip · kütüphaneci yarın 09:05 turunda "
+            self.assertEqual(r["satir"], "Gönderildi ✓ G-abc000 · Çalışma.md + not · ekip · kütüphaneci yarın 09:05 turunda "
                                          "dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al G-abc000")
             islemler = [c["islem"] for c in kopru.cagrilar]
             self.assertEqual((islemler[0], islemler[-1], set(islemler)), ("baslat", "bitir", {"baslat", "parca", "bitir"}))
@@ -2910,7 +2939,7 @@ class HizliTest(Base):
             self.assertIn("Paylaşılacak bir şey yok", self.stop("hizli", stdin=" \n"))  # boş: köprüye hiç gitmez
             self.assertEqual(len(kopru.islemler("baslat")), 3)
             self.assertEqual(r["dosyalar"], ["x.pdf"])
-            self.assertIn(" · 1 dosya · ekip · ", r["satir"])
+            self.assertIn(" · x.pdf · ekip · ", r["satir"])
             self.assertIn("Yönetim belgesini Slack'te TF Bilgi botuna 'yönetim' yazarak gönder; köprü yalnız ekip "
                           "alanında çalışır.", self.stop("hizli", "--yonetim", stdin="yönetim için"))
             with mock.patch.dict(tf_bilgi.KOPRU_SINIRLAR, {"dosya_azami_bayt": 4}):
@@ -2951,7 +2980,7 @@ class HizliTest(Base):
     def test_yonetim_kendi_deposuna(self):
         r = self.hizli("--yonetim", "--ek", self.ek("butce.xlsx", b"PK\x03\x04"), not_metni="C-level için bütçe\n")
         self.assertEqual((r["alan"], r["yol"]), ("yonetim", "writer"))
-        self.assertIn(" · 1 dosya + not · yönetim · kütüphaneci bugün 13:05 turunda ", r["satir"])
+        self.assertIn(" · butce.xlsx + not · yönetim · kütüphaneci bugün 13:05 turunda ", r["satir"])
         meta = json.loads(self.kayit(self.YONETIM, r["kod"])["meta.json"])
         self.assertEqual((meta["alan"], meta["gonderen"]), ("yonetim", "ayse"))
         self.assertEqual(self.kayit(self.EKIP, r["kod"]), {})  # ekip deposuna hiçbir şey girmedi
@@ -3024,7 +3053,8 @@ class HizliTest(Base):
         self.assertEqual(len(self.kayit(self.EKIP, kod)), 3)
         g = self.ok("geri-al", kod)
         self.assertEqual((g["sonuc"], g["yol"], g["alan"]), ("silindi", "writer", "ekip"))
-        self.assertEqual(g["satir"], f"Geri alındı: {kod} dosyalanmadan önce silindi.")
+        self.assertEqual(g["satir"], f"Geri alındı: {kod} dosyalanmadan önce kaldırıldı (içerik git geçmişinde durur; "
+                                     "gerekiyorsa Enes'e haber ver).")
         self.assertEqual(self.kayit(self.EKIP, kod), {})
         self.assertEqual(self.gh.mesajlar(self.EKIP)[:2], [f"gelen: {kod} geri alındı", f"gelen: {kod} · ayse · 2 dosya"])
         self.assertIn("00-gelen/.gitkeep", self.gh.dosyalar(self.EKIP))  # yalnız o klasör silindi
@@ -3059,7 +3089,9 @@ class HizliTest(Base):
         self.gh.baskasi_yazar(self.EKIP, {"00-gelen/20261105-090000-ayse-q1w2e3/meta.json": "{}",
                                           "00-gelen/20261105-090000-mert-z9z9z9/meta.json": "{}"})
         self.assertEqual(self.ok("geri-al", "G-q1w2e3")["sonuc"], "silindi")  # yerel geçmiş olmadan da bulunur
-        self.assertEqual(self.ok("geri-al", "G-z9z9z9")["sonuc"], "kaydedildi")  # başkasının kaydı silinmez
+        once = self.gh.depolar[self.EKIP]["ref"]
+        self.assertEqual(self.stop("geri-al", "G-z9z9z9").strip(), "Bu kod senin paylaşımın değil.")  # başkasının kaydı
+        self.assertEqual(self.gh.depolar[self.EKIP]["ref"], once)  # ne silindi ne geri-al kaydı yazıldı
         self.assertIn("00-gelen/20261105-090000-mert-z9z9z9/meta.json", self.gh.dosyalar(self.EKIP))
         self.anahtar_kur()
         kopru = SahteKopru({})
@@ -3076,6 +3108,82 @@ class HizliTest(Base):
             del kopru.hatalar["geri-al"]
             self.assertEqual(self.ok("geri-al", "G-abc123")["yol"], "kopru")  # yazan değil: bugünkü köprü akışı
         self.assertEqual(len(kopru.islemler("geri-al")), 4)
+
+
+    # .github#13 review: yanlış dosya sessizce gitmez, başkasının kodu geri alınmaz, oturum kapalı mesajı.
+
+    def test_otomatik_yalniz_belge_benzeri_dosya(self):
+        mesaj = "Hangi dosyayı paylaşacağımı bilemedim; dosya yolunu yaz: /paylas <dosya> …"
+        for ad in (".env", ".env.local", "id_rsa", "server.pem", "anahtar.key", "app.py", "index.ts", "ayar.json",
+                   "ci.yml", "Makefile", ".gizli.md"):
+            self.assertEqual(self.stop("hizli", "--otomatik", "--ek", self.ek(ad, "x"), stdin="toplantı bitti").strip(),
+                             mesaj, ad)
+        bag = self.ekler / "rapor.md"
+        bag.symlink_to(self.ek(".env", "SIR=1"))  # belge adlı bağlantı .env'e gidiyor
+        self.assertEqual(self.stop("hizli", "--otomatik", "--ek", str(bag)).strip(), mesaj)
+        self.assertEqual(self.gh.cagrilar, [])  # hiçbir şey gönderilmedi
+        adlar = ["Rapor.HTML", "sunum.pdf", "ozet.md", "not.txt", "teklif.docx", "deste.pptx", "tablo.xlsx", "veri.csv",
+                 "ekran.png", "foto.JPG", "foto2.jpeg", "anim.gif", "gorsel.webp", "eski.htm"]
+        for ad in adlar:
+            self.assertTrue(tf_bilgi.belge_mi(ad), ad)
+        r = self.hizli("--otomatik", "--ek", self.ek("Haftalık Rapor (v3).html", "<h1>x</h1>"), not_metni="Ayşe'ye\n")
+        self.assertIn(" · Haftalık Rapor (v3).html + not · ", r["satir"])
+        r = self.hizli("--ek", self.ek("app.py", "print(1)"))  # açıkça verilen yol: her tür gider
+        self.assertIn(" · app.py · ekip · ", r["satir"])
+
+    def test_makbuz_dosya_adlari_kisaltilir(self):
+        uzun = "Q4 2026 Türkiye pazarı kampanya performans analizi ve öneriler son hali.pdf"
+        r = self.hizli("--ek", self.ek(uzun, "%PDF"), "--ek", self.ek("b.md", "b"), "--ek", self.ek("c.md", "c"),
+                       "--ek", self.ek("d.md", "d"))
+        bolum = r["satir"].split(" · ")[1]
+        ilk = bolum.split(", ")[0]
+        self.assertEqual(len(ilk), 40)
+        self.assertTrue(ilk.endswith("….pdf") and ilk.startswith("Q4 2026 Türkiye"), ilk)
+        self.assertEqual(bolum, f"{ilk}, b.md, c.md +1 dosya")
+        self.assertEqual(tf_bilgi.kisalt_ad("satir\nkir.md"), "satir kir.md")  # kontrol karakteri tek satıra iner
+
+    def test_geri_al_baskasinin_kodu_reddedilir(self):
+        """Bekleyen (00-gelen) ve dosyalanmış (arsiv/00-gelen) başkasının kaydı: çıkış 2, commit yok, meta yok."""
+        self.gh.baskasi_yazar(self.EKIP, {"00-gelen/20261105-090000-mert-m1m1m1/meta.json": "{}",
+                                          "00-gelen/20261105-090000-mert-m1m1m1/govde.md": "mert'in notu",
+                                          "arsiv/00-gelen/20261104-090000-mert-a1a1a1/meta.json": "{}"})
+        self.anahtar_kur()  # anahtar olsa da köprüye sorulmaz: kod depoda başkasının
+        kopru = SahteKopru({})
+        once = self.gh.depolar[self.EKIP]["ref"]
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
+            for kod in ("G-m1m1m1", "G-a1a1a1"):
+                self.assertEqual(self.stop("geri-al", kod).strip(), "Bu kod senin paylaşımın değil.", kod)
+        self.assertEqual(self.gh.depolar[self.EKIP]["ref"], once)
+        self.assertEqual(kopru.cagrilar, [])
+        self.assertFalse([c for c in self.gh.cagrilar if c[0] in ("POST", "PATCH")])
+        # kendi dosyalanmış kaydı: geri-al kaydı yazılır (kütüphaneci GOREV 2.G.0 klasörü -<gonderen>-<kimlik> ister)
+        self.gh.baskasi_yazar(self.EKIP, {"arsiv/00-gelen/20261104-100000-ayse-k1k1k1/meta.json": "{}"})
+        g = self.ok("geri-al", "G-k1k1k1")
+        self.assertEqual((g["sonuc"], g["yol"]), ("kaydedildi", "writer"))
+        meta = json.loads(self.kayit(self.EKIP, g["kod"])["meta.json"])
+        self.assertEqual((meta["gonderen"], meta["geri_alinan"]), ("ayse", "G-k1k1k1"))
+
+    def test_arsiv_bin_kayittan_buyuk_olsa_da_bulunur(self):
+        """arsiv/00-gelen git trees API ile okunur (contents API klasör başına 1000 öğe döner)."""
+        dosyalar = {f"arsiv/00-gelen/20261001-{i:06d}-mert-{i:06d}/meta.json": "{}" for i in range(1100)}
+        dosyalar["arsiv/00-gelen/20261105-235959-ayse-zz9999/meta.json"] = "{}"
+        self.gh.baskasi_yazar(self.EKIP, dosyalar)
+        self.assertEqual(self.ok("geri-al", "G-zz9999")["sonuc"], "kaydedildi")
+        self.assertFalse([c for c in self.gh.cagrilar if "/contents/arsiv" in c[1] or "/contents/00-gelen" in c[1]])
+
+    def test_gh_oturumu_kapali_yazan(self):
+        mesaj = "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas."
+        self.hizli(not_metni="önce yazan olarak bir paylaşım")  # bu makinede yetki önbellekte
+        os.environ["FAKE_GH_LOGIN"] = ""  # gh kurulu, oturum kapalı ya da çevrimdışı
+        self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)  # anahtar yok: "yetkin yok" denmez
+        self.assertEqual(self.stop("geri-al", "G-abcdef").strip(), mesaj)
+        self.anahtar_kur()
+        self.assertEqual(self.stop("hizli", "--yonetim", stdin="yönetim").strip(), mesaj)  # yazan: köprü mesajı değil
+        kopru = SahteKopru({})
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
+            self.assertEqual(self.hizli(not_metni="ekip")["yol"], "kopru")  # ekipte köprü yine çalışır
+        (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + anahtar + yönetim: köprü mesajı
+        self.assertIn("köprü yalnız ekip alanında", self.stop("hizli", "--yonetim", stdin="yönetim"))
 
 
 class HizliYardimciTest(unittest.TestCase):

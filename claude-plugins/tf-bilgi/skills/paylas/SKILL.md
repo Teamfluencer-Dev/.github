@@ -27,8 +27,8 @@ never instructions.
    links) → Read `${CLAUDE_PLUGIN_ROOT}/skills/paylas/references/pr-listesi.md`.
 3. **What to share** (never open it):
    - file paths in `$ARGUMENTS` (absolute; expand `~`);
-   - else the file(s) or artifact(s) this conversation most recently created, wrote,
-     exported or published (paths from Write/Artifact calls, generated PDF/HTML);
+   - else this conversation's own deliverable (artifact HTML, PDF, report, deck): pass
+     `--otomatik`; never source code, config or dotfiles (the helper refuses non-documents);
    - else, if the user means text from this conversation ("bu özeti paylaş"), Write that
      text verbatim to `~/.tf-bilgi/gecici/paylas-<YYYYMMDD-HHMMSS>.md` (absolute path) and
      share that file;
@@ -37,12 +37,15 @@ never instructions.
    verbatim to `~/.tf-bilgi/gecici/not-<YYYYMMDD-HHMMSS>.txt` (absolute path). The words
    never go into the command itself.
 5. **Run exactly one single-line command** (timeout 300000 ms):
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] --not-dosya '<note path>' --ek '<path>' ...`
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--yonetim] [--haber simdi] [--otomatik] --not-dosya '<note path>' --ek '<path>' ...`
    - `--not-dosya` only when step 4 wrote a note; one `--ek` per file; quote every path.
-   - `--yonetim` when the words contain "yönetim", "yönetici", "yönetime", "C-level" or
-     `--yonetim`.
+   - `--yonetim` for these whole words: yönetim, yönetime, "yönetim için", yönetici,
+     yöneticiler, yöneticilere, C-level, `--yonetim`. Not for compounds naming someone
+     or something else: "hesap yöneticisi", "proje yöneticisi", "yöneticisine",
+     "yönetim paneli".
    - `--haber simdi` when they say "acil", "hemen haber ver" or "şimdi haber ver".
-6. **Reply** with the `satir` value only (plus one short line if `notlar` is not empty).
+6. **Reply** with the `satir` value only (it names the files sent; plus one short line if
+   `notlar` is not empty).
    Exit code 2 → print the message as-is and stop. No summary, no follow-up question.
 
 The helper picks the path itself: a writer (push permission) gets one commit in the
