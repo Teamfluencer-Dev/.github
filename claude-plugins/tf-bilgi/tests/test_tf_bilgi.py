@@ -3269,8 +3269,8 @@ class HizliTest(Base):
                                    "ilgim": {"ad": "Ilgım Örnek", "alanlar": ["ekip", "yonetim"]}})
         self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
         for notu, alan, alicilar in (("Yöneticilere haftalık özet", "yonetim", None),
-                                     ("Dilara'ya sunum, Cuma'ya kadar", "yonetim", ["dilara"]),
-                                     ("Ilgım'a karar lazım", "yonetim", ["ilgim"]),
+                                     ("Dilara'ya sunum, Cuma'ya kadar", "ekip", ["dilara"]),  # ekipten yöneticiye ekipte kalır
+                                     ("Ilgım'a karar lazım", "ekip", ["ilgim"]),
                                      ("Dilara ve Mert'e", "ekip", ["dilara", "mert"]),
                                      ("ekip için Dilara'ya", "ekip", None),
                                      ("Yönetim paneli hatası", "ekip", []),
@@ -3548,7 +3548,7 @@ class WorkerKopruTest(Base):
         self.assertEqual(json.loads((self.cache / "hizli.json").read_text())["gonderilen"][kod]["yol"], "kopru")
 
     def test_alan_kurali_koprude_kim_rehberiyle(self):
-        for notu, alan, alicilar in (("Ilgım'a karar lazım", "yonetim", ["ilgim"]), ("Dilara'ya sunum", "yonetim", ["dilara"]),
+        for notu, alan, alicilar in (("Ilgım'a karar lazım", "ekip", ["ilgim"]), ("Dilara'ya sunum", "ekip", ["dilara"]),
                                      ("Pazartesi notları", "ekip", []), ("C-level özeti", "yonetim", None)):
             r = self.ok("hizli", stdin=notu + "\n")
             self.assertEqual((r["alan"], r["alicilar"]), (alan, alicilar), notu)
@@ -3812,7 +3812,7 @@ class AktariciKopruTest(WorkerKopruTest):
         notu.parent.mkdir(parents=True, exist_ok=True)
         notu.write_text("gizli: Dilara'ya, yalnız o görsün\n")
         r = self.ok("alan", "--not-dosya", str(notu))
-        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        self.assertEqual((r["alan"], r["alicilar"]), ("ekip", ["dilara"]))  # ekipten yöneticiye: ekip
         self.assertTrue(r["neden"].startswith("kural 2"))
         self.assertEqual(self.ok("alan", "--ekip", "--not-dosya", str(notu))["alan"], "ekip")
         self.worker.hatalar["kim"] = ("Köprü kurulumu bitmedi; Enes'e haber ver.", "ayar")

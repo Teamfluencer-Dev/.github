@@ -534,9 +534,10 @@ def alan_sec(metin, gonderen, kisiler):
     if kelime:
         return {"alan": "yonetim", "alicilar": alicilar, "neden": f"kural 1: “{kelime}” geçiyor"}
     if alicilar:
-        if set(alicilar) <= YONETIMI_GORENLER and set(alicilar) & YONETIM_KISILERI:
+        # Yalnız yönetim kendi arasında (alici.py ile aynı): ekipten yöneticiye giden belge ekipte kalır.
+        if gonderen in YONETIM_KISILERI and set(alicilar) <= YONETIM_KISILERI:
             return {"alan": "yonetim", "alicilar": alicilar,
-                    "neden": f"kural 2: alıcılar yönetimde ({', '.join(alicilar)})"}
+                    "neden": f"kural 2: yönetim kendi arasında ({', '.join(alicilar)})"}
         return {"alan": "ekip", "alicilar": alicilar, "neden": f"kural 2: alıcılar ekipte ({', '.join(alicilar)})"}
     if gonderen in YALNIZ_YONETIM:
         return {"alan": "yonetim", "alicilar": [], "neden": f"kural 3: gönderen yalnız yönetimde ({gonderen})"}
