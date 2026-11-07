@@ -380,10 +380,12 @@ def alan_bayrak(yonetim):
 # KB deposundaki araclar/alici.py ile aynı kural ve aynı ortak test vektörü (araclar/alici_vektorleri.json; eklentide
 # tests/alici_vektorleri.json kopyası). Girdi yalnız gönderenin kendi sözleri (not), belgenin içi değil. Model yok, ağ yok.
 # Sıra: 4 ("ekip için" / --ekip → ekip, 1–3'ü ezer), 1 (yönetim kelimesi → yönetim), 2 (sözlerde adı geçen alıcılar:
-# hepsi yönetimi görebilenlerden ve en az biri yönetim kişisiyse → yönetim, değilse ekip), 3 (alıcı yoksa: gönderen yalnız
-# yönetimdeyse → yönetim, değilse ekip). Kişi listeleri Enes kararıdır (7 Kas 2026), kisiler.json'dan türetilmez.
+# gönderen de alıcıların hepsi de yönetim kişisiyse → yönetim, yani yönetim kendi arasında; ekipten yöneticiye giden ya da
+# karışık alıcılı belge → ekip; gönderen bilinmiyorsa → ekip), 3 (alıcı yoksa: gönderen yalnız yönetimdeyse → yönetim,
+# değilse ekip). Ekipten biri belgeyi yönetimde tutmak isterse "yönetim" yazar (kural 1). Kişi listeleri Enes kararıdır
+# (7 Kas 2026 gece), kisiler.json'dan türetilmez. Ortak vektör dosyasındaki `yonetimi_gorenler` artık kuralda kullanılmaz
+# (eski kural 2; KB dosyasıyla aynı kalsın diye dosyada durur).
 YONETIM_KISILERI = frozenset({"ilgim", "dilara", "enes", "ogi"})
-YONETIMI_GORENLER = frozenset({"enes", "ilgim", "dilara", "ogi"})
 YALNIZ_YONETIM = frozenset({"dilara", "ogi"})
 # Yönetim kelimeleri: iki kökün izinli çekimleri (review tf-bilgi#11). İyelik/tamlama biçimleri ("hesap yöneticisi",
 # "yöneticisine", "proje yöneticimiz", "kampanya yönetiminde") listede yok, sayılmaz.

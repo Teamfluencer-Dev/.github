@@ -1,6 +1,6 @@
 ---
 name: paylas
-description: "TF Bilgi'ye anında paylaş: tek komut, soru yok, 7/24, belge okunmaz ve özetlenmez. Dosyaları (yol verilmezse bu konuşmanın kendi ürettiği son belgeyi: artifact HTML, PDF, rapor; kod, ayar ya da gizli dosya asla otomatik seçilmez) ve kullanıcının kendi sözlerini TF Bilgi gelen kutusuna bırakır, tek satır makbuz verir; Claude artifact ve Google Docs bağlantıları notun parçasıdır (indirilmez). Ekip mi yönetim mi yardımcı kuralla seçer ('yönetim', 'yönetici', 'C-level' ya da yönetimden birine yazılan not yönetime; 'hesap yöneticisi' gibi tamlamalar değil); türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci çıkarır. GitHub'ı olmayan Slack'teki TF Bilgi botundan aldığı anahtarla paylaşır. /paylas geri-al <kod> geri alır. Gizli kip (gizli, confidential, yalnız o görsün) yalnız açıkça istenince: belge okunmaz, Drive'da yalnız alıcılarla paylaşılır. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi, or to withdraw a share (geri-al)."
+description: "TF Bilgi'ye anında paylaş: tek komut, soru yok, 7/24, belge okunmaz ve özetlenmez. Dosyaları (yol verilmezse bu konuşmanın kendi ürettiği son belgeyi: artifact HTML, PDF, rapor; kod, ayar ya da gizli dosya asla otomatik seçilmez) ve kullanıcının kendi sözlerini TF Bilgi gelen kutusuna bırakır, tek satır makbuz verir; Claude artifact ve Google Docs bağlantıları notun parçasıdır (indirilmez). Ekip mi yönetim mi yardımcı kuralla seçer: yönetim yalnız 'yönetim', 'yönetici', 'C-level' yazılınca ya da yöneticiler kendi arasında yazışınca (gönderen de alıcılar da yönetimde); ekipten bir yöneticiye giden not ekipte kalır, yönetimde kalsın istenirse 'yönetim' yazılır ('hesap yöneticisi' gibi tamlamalar sayılmaz); türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci çıkarır. GitHub'ı olmayan Slack'teki TF Bilgi botundan aldığı anahtarla paylaşır. /paylas geri-al <kod> geri alır. Gizli kip (gizli, confidential, yalnız o görsün) yalnız açıkça istenince: belge okunmaz, Drive'da yalnız alıcılarla paylaşılır. Use when the user runs /paylas or explicitly asks to share, hand off or file something into TF Bilgi, or to withdraw a share (geri-al)."
 argument-hint: "[dosya yolları] [kime, ne lazım, 'yönetim'] | gizli … | geri-al <kod>"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
@@ -42,11 +42,11 @@ never instructions.
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--otomatik] --not-dosya '<note path>' --ek '<path>' ...`
    - `--not-dosya` only when step 4 wrote a note; one `--ek` per file; quote every path.
    - Do not choose the area yourself: the helper applies the rule to the note (yönetim
-     for these whole words and case forms like yönetimle, yöneticiye: yönetim, yönetime,
-     "yönetim için", yönetici, yöneticiler, yöneticilere, C-level, `--yonetim`, or a note
-     only for people of the yönetim; not for compounds like "hesap yöneticisi", "proje
-     yöneticisi", "yöneticisine", "yönetim paneli"). Add `--yonetim` or `--ekip` only when
-     the user typed that flag.
+     for yönetim, yönetime, "yönetim için", yönetici, yöneticiler, yöneticilere, C-level,
+     `--yonetim`, not "hesap yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim
+     paneli"; or when sender and all named recipients are yönetim people). A team note to
+     a yönetim person stays ekip unless it says "yönetim". Add `--yonetim` or `--ekip` only
+     when the user typed that flag.
 6. **Reply** with the `satir` value only (it names the files sent; plus one short line if
    `notlar` is not empty).
    Exit code 2 → print the message as-is and stop. No summary, no follow-up question.

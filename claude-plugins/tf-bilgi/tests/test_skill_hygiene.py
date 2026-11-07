@@ -198,6 +198,13 @@ class SkillShellHygieneTest(unittest.TestCase):
         # 0.9.0: alanı yardımcı seçer (§3); skill bayrağı yalnız kullanıcı yazdıysa ekler; sessiz saat yok
         self.assertIn("Do not choose the area yourself: the helper applies the rule to the note", " ".join(adim5.split()))
         self.assertIn("Add `--yonetim` or `--ekip` only when the user typed that flag.", " ".join(adim5.split()))
+        # review #16: yönetim yalnız "yönetim" yazılınca ya da yönetim kendi arasında; ekipten yöneticiye ekipte kalır
+        self.assertIn("sender and all named recipients are yönetim people", " ".join(adim5.split()))
+        self.assertIn('A team note to a yönetim person stays ekip unless it says "yönetim".', " ".join(adim5.split()))
+        aciklama = paylas.split("\n", 3)[2]
+        self.assertIn("ekipten bir yöneticiye giden not ekipte kalır", aciklama)
+        self.assertNotIn("yönetimden birine yazılan not yönetime", paylas)
+        self.assertNotIn("only for people of the yönetim", paylas)
         for md in SKILLS + REFERANSLAR:
             govde = metin(md)
             for eski in ("--haber simdi", "sessiz", "Mesai", "out-of-hours", "08:30", "tf-bilgi-gelen", "gelen kutusu deposu",
