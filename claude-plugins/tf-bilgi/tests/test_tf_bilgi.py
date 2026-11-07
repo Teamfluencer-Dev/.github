@@ -3326,7 +3326,8 @@ class AlanKuraliTest(unittest.TestCase):
         self.assertEqual(tuple(tf_bilgi.YONETIM_KELIMELERI), tuple(v["yonetim_kelimeleri"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAMA_BASI), tuple(v["yonetim_tamlama_basi"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_IYELIK_BELIRSIZ), tuple(v["yonetim_iyelik_belirsiz"]))
-        self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAYANLARI), tuple(v["yonetim_tamlayanlari"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_BELIRTME_ONCESI), tuple(v["yonetim_belirtme_oncesi"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_BELIRTME_FIILLERI), tuple(v["yonetim_belirtme_fiilleri"]))
         self.assertEqual(tuple(tf_bilgi.AD_EKLERI), tuple(v["ekler"]))
 
     def test_yonetim_kelimesi_cekimleri(self):

@@ -393,14 +393,11 @@ YONETIM_EKLERI = (("yonetim", ("", "e", "i", "in", "de", "den", "le", "ce", "dek
 YONETIM_KELIMELERI = tuple(kok + ek for kok, ekler in YONETIM_EKLERI for ek in ekler)
 YONETIM_TAMLAMA_BASI = ("panel", "sistem", "ekran", "sayfa", "arac", "modul", "konsol", "uygulama", "yazilim",
                         "platform")  # "yönetim paneli": teknik tamlama, yönetim sayılmaz
-# Belirtme hâli de iyelik de olabilen biçimler: önceki kelime tamlayansa ("kampanya yönetimi") sayılmaz; listede
-# olmayan tamlayan sayılır (belirsizlik yönetime düşer).
+# Belirtme hâli de iyelik de olabilen biçimler: metnin ilk kelimesiyse, önceki kelime YONETIM_BELIRTME_ONCESI'nde
+# ya da sonraki kelime YONETIM_BELIRTME_FIILLERI'yle başlıyorsa sayılır; aksi hâlde tamlama ("başvuru yönetimi").
 YONETIM_IYELIK_BELIRSIZ = ("yonetimi", "yoneticileri")
-YONETIM_TAMLAYANLARI = ("kampanya", "proje", "hesap", "icerik", "marka", "urun", "musteri", "kullanici", "influencer",
-                        "topluluk", "medya", "reklam", "veri", "bilgi", "belge", "dosya", "stok", "siparis", "odeme",
-                        "abonelik", "bakiye", "butce", "finans", "risk", "kriz", "zaman", "surec", "operasyon",
-                        "satis", "sistem", "sunucu", "veritabani", "site", "magaza", "rol", "yetki", "gorev",
-                        "kalite", "performans", "tedarik", "envanter", "kaynak", "kaynaklari", "iliskileri")
+YONETIM_BELIRTME_ONCESI = ("ust", "sirket", "tum", "genel", "lutfen", "ve")
+YONETIM_BELIRTME_FIILLERI = ("bilgilendir", "haberdar", "ilgilendir", "toplantiya")
 AD_EKLERI = ("e", "a", "ye", "ya", "i", "u", "yi", "yu", "in", "un", "nin", "nun", "de", "da", "te", "ta", "den", "dan",
              "ten", "tan", "le", "la", "yle", "yla", "ler", "lar", "lere", "lara")  # kesmesiz yazılan ada gelen ek
 _YONETIM_GORUNUR = {k: "yön" + k[3:] for k in YONETIM_KELIMELERI}  # ekler ASCII: "yonetimle" → "yönetimle"
@@ -509,8 +506,10 @@ def yonetim_kelimesi(metin):
             continue
         if w == "yonetim" and i + 1 < len(kel) and kel[i + 1][0].startswith(YONETIM_TAMLAMA_BASI):
             continue  # "yönetim paneli", "içerik yönetim sistemi"
-        if w in YONETIM_IYELIK_BELIRSIZ and i > 0 and kel[i - 1][0] in YONETIM_TAMLAYANLARI:
-            continue  # "kampanya yönetimi", "proje yöneticileri": tamlama (iyelik)
+        if w in YONETIM_IYELIK_BELIRSIZ and not (
+                i == 0 or kel[i - 1][0] in YONETIM_BELIRTME_ONCESI
+                or any(kel[j][0].startswith(YONETIM_BELIRTME_FIILLERI) for j in range(i + 1, min(i + 4, len(kel))))):
+            continue  # "kampanya yönetimi", "başvuru yönetimi": tamlama (iyelik)
         return _YONETIM_GORUNUR[w]
     return None
 
