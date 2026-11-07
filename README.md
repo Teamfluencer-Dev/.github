@@ -357,7 +357,7 @@ repodaki eklenti PR'ı, aynı gün hemen ardından KB PR'ı. Köprü yolunda `kb
 indirilir (`~/.tf-bilgi/kopru/araclar/kb.py`) ve aynı pinle denetlenir.
 0.4.0 geçişi (gizli paylaşımlı `kb.py`, Teamfluencer-Dev/tf-bilgi#2 head `76fd0e7`) bitti:
 0.5.0 yalnız o hash'i taşır. 0.7.0 geçişi: hızlı yol ve raflar `kb.py`'si (Teamfluencer-Dev/tf-bilgi#6
-head `eea2011`, #7'yi içerir; sha256 `82b1e559…`, ekip ve yönetim kopyası aynı) eklendi; KB PR'ı merge
+head `e59a23b`, #7'yi içerir; sha256 `c9fd7f6a…`, ekip ve yönetim kopyası aynı) eklendi; KB PR'ı merge
 edilene kadar 0.4.0 ve 0.6.0 hash'leri de geçer. Yönetim deposu org dışında, `eneskrblt/tf-bilgi-yonetim`'de
 (0.7.0). `/paylas`'ın hızlı yolu `kb.py`'ye hiç dokunmaz (klon yok); pin yalnız gizli
 paylaşım, `/toplu-paylas` ve `/bilgi` için geçerlidir.

@@ -513,11 +513,11 @@ class KbSurumTest(Base):
 
     def test_gecis_iki_surumu_de_kabul_eder(self):
         """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): 0.4.0'ın kb.py'si (tf-bilgi#2), köprü kb.py'si
-        (tf-bilgi#5 head d24c0a4) ve 0.7.0'ın hızlı yol + raflar kb.py'si (tf-bilgi#6 head eea2011, #7'yi içerir; KB PR'ı
+        (tf-bilgi#5 head d24c0a4) ve 0.7.0'ın hızlı yol + raflar kb.py'si (tf-bilgi#6 head e59a23b, #7'yi içerir; KB PR'ı
         merge edilene kadar eskiler de geçer)."""
         self.assertEqual(GERCEK_KB_SHA256, ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",
                                             "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f",
-                                            "82b1e559d56f48c69e5109435667b5ead6a4691b9cbd13a05136a37044686b24"))
+                                            "c9fd7f6a98eabadd35bb17b055b8b887b80fb160c347c10d8a736359f418e30e"))
         self.assertNotIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)  # 0.3.1
         self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
         eski_stub = STUB_KB + "# eski\n"
