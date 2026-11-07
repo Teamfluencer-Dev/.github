@@ -156,9 +156,9 @@ Yol yardımcıda seçilir:
 **Alan (ekip mi yönetim mi) yardımcıda, deterministik** (bitiş tasarımı §3; KB `araclar/alici.py` ile aynı kural,
 ortak vektörler `tests/alici_vektorleri.json`): önce sözlerdeki bağlantılar ve TF Bilgi kimlikleri atılır; "ekip için"
 ya da `--ekip` → ekip; tam kelime yönetim, yönetime, yönetici, yöneticiler, yöneticilere, C-level ya da `--yonetim` →
-yönetim ("hesap yöneticisi", "yönetim paneli" gibi tamlamalar değil); yoksa adı geçen alıcıların hepsi yönetimi
-görebilenlerden (Enes, Ilgım, Dilara, Ogi) ve en az biri yönetim kişisiyse (Enes, Dilara, Ogi) → yönetim ("Enes'e" →
-yönetim, "Ilgım'a" → ekip, "Enes ve Abdullah'a" → ekip; birden çok kişiye uyan ad sayılmaz); alıcı yoksa yalnız
+yönetim ("hesap yöneticisi", "yönetim paneli" gibi tamlamalar değil); yoksa adı geçen alıcıların hepsi yönetim
+kişisiyse (Ilgım, Dilara, Enes, Ogi) → yönetim ("Enes'e" →
+yönetim, "Ilgım'a" → yönetim, "Enes ve Abdullah'a" → ekip; birden çok kişiye uyan ad sayılmaz); alıcı yoksa yalnız
 yönetimde olan gönderen (Dilara, Ogi) → yönetim, değilse ekip. Kişi listesi yazanda depodaki `kisiler.json`'dan,
 köprüde Worker'ın `kim` yanıtından (yalnız ad ve alanlar) gelir. Alıcılara her zaman anında haber gider. `/paylas geri-al <kod>` yalnız kendi paylaşımını geri alır: yazanın
 kaydı henüz `00-gelen/`'deyse tek commit'le kaldırılır ("içerik git geçmişinde durur;

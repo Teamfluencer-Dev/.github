@@ -382,7 +382,7 @@ def alan_bayrak(yonetim):
 # Sıra: 4 ("ekip için" / --ekip → ekip, 1–3'ü ezer), 1 (yönetim kelimesi → yönetim), 2 (sözlerde adı geçen alıcılar:
 # hepsi yönetimi görebilenlerden ve en az biri yönetim kişisiyse → yönetim, değilse ekip), 3 (alıcı yoksa: gönderen yalnız
 # yönetimdeyse → yönetim, değilse ekip). Kişi listeleri Enes kararıdır (7 Kas 2026), kisiler.json'dan türetilmez.
-YONETIM_KISILERI = frozenset({"enes", "dilara", "ogi"})
+YONETIM_KISILERI = frozenset({"ilgim", "dilara", "enes", "ogi"})
 YONETIMI_GORENLER = frozenset({"enes", "ilgim", "dilara", "ogi"})
 YALNIZ_YONETIM = frozenset({"dilara", "ogi"})
 # Yönetim kelimeleri: iki kökün izinli çekimleri (review tf-bilgi#11). İyelik/tamlama biçimleri ("hesap yöneticisi",

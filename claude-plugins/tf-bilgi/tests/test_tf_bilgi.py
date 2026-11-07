@@ -3270,7 +3270,7 @@ class HizliTest(Base):
         self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
         for notu, alan, alicilar in (("Yöneticilere haftalık özet", "yonetim", None),
                                      ("Dilara'ya sunum, Cuma'ya kadar", "yonetim", ["dilara"]),
-                                     ("Ilgım'a karar lazım", "ekip", ["ilgim"]),
+                                     ("Ilgım'a karar lazım", "yonetim", ["ilgim"]),
                                      ("Dilara ve Mert'e", "ekip", ["dilara", "mert"]),
                                      ("ekip için Dilara'ya", "ekip", None),
                                      ("Yönetim paneli hatası", "ekip", []),
@@ -3548,7 +3548,7 @@ class WorkerKopruTest(Base):
         self.assertEqual(json.loads((self.cache / "hizli.json").read_text())["gonderilen"][kod]["yol"], "kopru")
 
     def test_alan_kurali_koprude_kim_rehberiyle(self):
-        for notu, alan, alicilar in (("Ilgım'a karar lazım", "ekip", ["ilgim"]), ("Dilara'ya sunum", "yonetim", ["dilara"]),
+        for notu, alan, alicilar in (("Ilgım'a karar lazım", "yonetim", ["ilgim"]), ("Dilara'ya sunum", "yonetim", ["dilara"]),
                                      ("Pazartesi notları", "ekip", []), ("C-level özeti", "yonetim", None)):
             r = self.ok("hizli", stdin=notu + "\n")
             self.assertEqual((r["alan"], r["alicilar"]), (alan, alicilar), notu)
