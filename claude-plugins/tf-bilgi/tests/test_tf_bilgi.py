@@ -3325,7 +3325,21 @@ class AlanKuraliTest(unittest.TestCase):
         self.assertEqual(tf_bilgi.YALNIZ_YONETIM, frozenset(v["yalniz_yonetim"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_KELIMELERI), tuple(v["yonetim_kelimeleri"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAMA_BASI), tuple(v["yonetim_tamlama_basi"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_IYELIK_BELIRSIZ), tuple(v["yonetim_iyelik_belirsiz"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAYANLARI), tuple(v["yonetim_tamlayanlari"]))
         self.assertEqual(tuple(tf_bilgi.AD_EKLERI), tuple(v["ekler"]))
+
+    def test_yonetim_kelimesi_cekimleri(self):
+        """review tf-bilgi#11: ekli biçimler yönetim; iyelik/tamlama biçimleri değil."""
+        for metin in ("Yönetimle paylaşılsın", "Yöneticiye iletir misin", "Yönetimin bilgisine", "yönetimde konuşalım",
+                      "yöneticilerimize", "Lütfen yönetimi bilgilendir", "yöneticileri toplayalım"):
+            self.assertEqual(tf_bilgi.alan_sec(metin, "nil", {})["alan"], "yonetim", metin)
+        for metin in ("Hesap yöneticisine devir", "proje yöneticimiz", "Kampanya yönetimi notu", "yönetim panelinde",
+                      "Proje yöneticileri için", "kampanya yönetiminde"):
+            self.assertEqual(tf_bilgi.alan_sec(metin, "nil", {})["alan"], "ekip", metin)
+        self.assertEqual(tf_bilgi.yonetim_kelimesi("Yöneticilere"), "yöneticilere")
+        # hizli_alan kelimeyi görünce kişi listesine bakmadan yönetim der
+        self.assertTrue(tf_bilgi.yonetim_kelimesi("yönetimle"))
 
     def test_kisiler_bos_ya_da_bilinmeyen(self):
         self.assertEqual(tf_bilgi.alan_sec("Enes'e", None, {})["alan"], "ekip")  # rehber yok: alıcı bulunamaz

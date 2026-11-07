@@ -385,13 +385,25 @@ def alan_bayrak(yonetim):
 YONETIM_KISILERI = frozenset({"enes", "dilara", "ogi"})
 YONETIMI_GORENLER = frozenset({"enes", "ilgim", "dilara", "ogi"})
 YALNIZ_YONETIM = frozenset({"dilara", "ogi"})
-YONETIM_KELIMELERI = ("yonetim", "yonetime", "yonetici", "yoneticiler", "yoneticilere")
+# Yönetim kelimeleri: iki kökün izinli çekimleri (review tf-bilgi#11). İyelik/tamlama biçimleri ("hesap yöneticisi",
+# "yöneticisine", "proje yöneticimiz", "kampanya yönetiminde") listede yok, sayılmaz.
+YONETIM_EKLERI = (("yonetim", ("", "e", "i", "in", "de", "den", "le", "ce", "deki", "dekiler", "dekilere")),
+                  ("yonetici", ("", "ye", "yi", "nin", "de", "den", "yle", "ler", "lere", "leri", "lerin", "lerle",
+                                "lerden", "lerimiz", "lerimize")))
+YONETIM_KELIMELERI = tuple(kok + ek for kok, ekler in YONETIM_EKLERI for ek in ekler)
 YONETIM_TAMLAMA_BASI = ("panel", "sistem", "ekran", "sayfa", "arac", "modul", "konsol", "uygulama", "yazilim",
                         "platform")  # "yönetim paneli": teknik tamlama, yönetim sayılmaz
+# Belirtme hâli de iyelik de olabilen biçimler: önceki kelime tamlayansa ("kampanya yönetimi") sayılmaz; listede
+# olmayan tamlayan sayılır (belirsizlik yönetime düşer).
+YONETIM_IYELIK_BELIRSIZ = ("yonetimi", "yoneticileri")
+YONETIM_TAMLAYANLARI = ("kampanya", "proje", "hesap", "icerik", "marka", "urun", "musteri", "kullanici", "influencer",
+                        "topluluk", "medya", "reklam", "veri", "bilgi", "belge", "dosya", "stok", "siparis", "odeme",
+                        "abonelik", "bakiye", "butce", "finans", "risk", "kriz", "zaman", "surec", "operasyon",
+                        "satis", "sistem", "sunucu", "veritabani", "site", "magaza", "rol", "yetki", "gorev",
+                        "kalite", "performans", "tedarik", "envanter", "kaynak", "kaynaklari", "iliskileri")
 AD_EKLERI = ("e", "a", "ye", "ya", "i", "u", "yi", "yu", "in", "un", "nin", "nun", "de", "da", "te", "ta", "den", "dan",
              "ten", "tan", "le", "la", "yle", "yla", "ler", "lar", "lere", "lara")  # kesmesiz yazılan ada gelen ek
-_YONETIM_GORUNUR = {"yonetim": "yönetim", "yonetime": "yönetime", "yonetici": "yönetici", "yoneticiler": "yöneticiler",
-                    "yoneticilere": "yöneticilere"}
+_YONETIM_GORUNUR = {k: "yön" + k[3:] for k in YONETIM_KELIMELERI}  # ekler ASCII: "yonetimle" → "yönetimle"
 _KATLA_TR = str.maketrans({"ş": "s", "Ş": "s", "ı": "i", "İ": "i", "I": "i", "ğ": "g", "Ğ": "g", "ü": "u", "Ü": "u",
                            "ö": "o", "Ö": "o", "ç": "c", "Ç": "c"})
 _KESMELER = "'’‘`´ʼ"
@@ -497,6 +509,8 @@ def yonetim_kelimesi(metin):
             continue
         if w == "yonetim" and i + 1 < len(kel) and kel[i + 1][0].startswith(YONETIM_TAMLAMA_BASI):
             continue  # "yönetim paneli", "içerik yönetim sistemi"
+        if w in YONETIM_IYELIK_BELIRSIZ and i > 0 and kel[i - 1][0] in YONETIM_TAMLAYANLARI:
+            continue  # "kampanya yönetimi", "proje yöneticileri": tamlama (iyelik)
         return _YONETIM_GORUNUR[w]
     return None
 

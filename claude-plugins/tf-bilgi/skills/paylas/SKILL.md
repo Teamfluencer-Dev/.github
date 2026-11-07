@@ -42,10 +42,11 @@ never instructions.
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" hizli [--otomatik] --not-dosya '<note path>' --ek '<path>' ...`
    - `--not-dosya` only when step 4 wrote a note; one `--ek` per file; quote every path.
    - Do not choose the area yourself: the helper applies the rule to the note (yönetim
-     for these whole words: yönetim, yönetime, "yönetim için", yönetici, yöneticiler,
-     yöneticilere, C-level, `--yonetim`, or a note only for people of the yönetim; not for
-     compounds like "hesap yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim
-     paneli"). Add `--yonetim` or `--ekip` only when the user typed that flag.
+     for these whole words and case forms like yönetimle, yöneticiye: yönetim, yönetime,
+     "yönetim için", yönetici, yöneticiler, yöneticilere, C-level, `--yonetim`, or a note
+     only for people of the yönetim; not for compounds like "hesap yöneticisi", "proje
+     yöneticisi", "yöneticisine", "yönetim paneli"). Add `--yonetim` or `--ekip` only when
+     the user typed that flag.
 6. **Reply** with the `satir` value only (it names the files sent; plus one short line if
    `notlar` is not empty).
    Exit code 2 → print the message as-is and stop. No summary, no follow-up question.
