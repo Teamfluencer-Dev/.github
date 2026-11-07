@@ -2198,6 +2198,7 @@ KOPRU_KB_IZINLI = ("tara", "eslestir", "toplu-hazirla")  # ayna klonu yok: yaln�
 KOPRU_SINIRLAR = {"parca_bayt": 4 * 1024 * 1024, "dosya_azami_bayt": 20 * 1024 * 1024,
                   "kayit_azami_bayt": 25 * 1024 * 1024, "dosya_azami_sayi": 10}
 KOPRU_ZAMAN_ASIMI, KOPRU_PARCA_ZAMAN_ASIMI = 60, 300
+KIM_ZAMAN_ASIMI = 20  # saniye: `kim` kısa bir sorudur; köprü yanıt vermiyorsa kullanıcı uzun beklemesin
 KOPRU_DENEME = 3          # bağlantı hatasında parça başına deneme (köprü aynı parçayı ikinci kez yazmaz)
 KOPRU_BEKLE = 2.0         # saniye, denemeler arası (testler 0 yapar)
 KOD_RE = re.compile(r"^G-[a-z0-9]{6}$")
@@ -2276,12 +2277,21 @@ _KIM_ONBELLEK = {}  # bir çalıştırmada köprünün `kim` yanıtı (main her 
 
 
 def kopru_kim(anahtar=None):
-    """Köprünün `kim` yanıtı; bir çalıştırmada anahtar ve adres başına bir kez sorulur (yalnız başarılı yanıt saklanır)."""
+    """Köprünün `kim` yanıtı; bir çalıştırmada anahtar ve adres başına en çok bir kez sorulur (zaman aşımı
+    KIM_ZAMAN_ASIMI). Hata da saklanır: aynı çalıştırmada yeniden sorulmaz, aynı hata (köprünün kendi mesajı ya da
+    bağlantı hatası) yeniden yükselir; böylece bir anlık kesinti hem sessiz bir varsayıma hem de ikinci bir beklemeye
+    dönüşmez (review #15)."""
     anahtar = anahtar or anahtar_oku()
     k = (anahtar[0], hashlib.sha256(anahtar[1].encode("ascii")).hexdigest(), kopru_adresi(anahtar[0]))
     if k not in _KIM_ONBELLEK:
-        _KIM_ONBELLEK[k] = kopru_cagir("kim", anahtar=anahtar)
-    return _KIM_ONBELLEK[k]
+        try:
+            _KIM_ONBELLEK[k] = kopru_cagir("kim", zaman_asimi=KIM_ZAMAN_ASIMI, anahtar=anahtar)
+        except Stop as e:
+            _KIM_ONBELLEK[k] = e
+    sonuc = _KIM_ONBELLEK[k]
+    if isinstance(sonuc, Stop):
+        raise sonuc
+    return sonuc
 
 
 def kopru_protokolu(kim):
@@ -2292,23 +2302,20 @@ def kopru_protokolu(kim):
 
 def yeni_kopru_mu():
     """Kayıtlı anahtar yeni köprüye mi gidiyor (okuma yok, yönetime gönderilir, alan/konu istemciden): `cf` dağıtımı
-    ağsız evet; başka dağıtımda `kim.protokol >= 2` (Türkiye'den Apps Script aktarıcısı). kim yanıt vermezse False
-    (çağıran işlem aynı hatayı açıkça söyler)."""
+    ağsız evet; başka dağıtımda `kim.protokol >= 2` (Türkiye'den Apps Script aktarıcısı). `kim` yanıt vermezse onun
+    hatası olduğu gibi yükselir (köprünün mesajı ya da bağlantı hatası): "anahtar eski" gibi bir tahmin söylenmez."""
     anahtar = kayitli_anahtar()
     if not anahtar:
         return False
     if cf_dagitim_mi(anahtar[0]):
         return True
-    try:
-        return kopru_protokolu(kopru_kim(anahtar)) >= 2
-    except Stop:
-        return False
+    return kopru_protokolu(kopru_kim(anahtar)) >= 2
 
 
 def yol_sec():
     """Sözleşme §1: TF_BILGI_YOL zorlar; yoksa anahtar dosyası varsa köprü, yoksa doğrudan (GitHub) yol. 0.9.0: yeni
-    köprü (Worker ya da aktarıcısı) okuma yapmaz; `gh` girişi olan (depoyu GitHub'dan okuyabilen) için okuma doğrudan
-    yoldan gider."""
+    köprü (Worker ya da aktarıcısı) okuma yapmaz; depoya yazma yetkisi doğrulanan (gh push) anahtar sahibi doğrudan
+    yoldan çalışır, diğerleri köprüde kalır ve sade cümleyi duyar."""
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
     if zorla == "dogrudan":
         return "dogrudan"
@@ -2320,9 +2327,19 @@ def yol_sec():
         raise Stop(f"TF_BILGI_YOL anlaşılmadı: {zorla!r} (kopru ya da dogrudan).")
     if not anahtar_yolu().is_file():
         return "dogrudan"
-    if yeni_kopru_mu() and gh_login():  # önce köprü (kim önbellekte, köprü yolu onu zaten sorar), sonra GitHub
+    if depoya_yazar() and yeni_kopru_mu():  # yeni köprü okumaz; depoya yazan (push doğrulandı) GitHub'dan çalışır
         return "dogrudan"
     return "kopru"
+
+
+def depoya_yazar():
+    """Bu makinedeki gh girişinin ekip deposuna push yetkisi doğrulandı mı (hizli_yetki: bir gün önbellekte). Yalnız
+    `gh` girişi yetmez: depoyu okuyamayan ya da yazamayan anahtar sahibi doğrudan yola gönderilmez (review #15)."""
+    slug = hizli_slug("ekip")
+    if not slug or not which("gh"):
+        return False
+    login = gh_login()
+    return bool(login) and hizli_yetki(login, slug)[0] is True
 
 
 def eklenti_surumu():
@@ -2475,10 +2492,15 @@ def ayna_kur():
 
 
 def ayna_mevcut():
-    if yeni_kopru_mu():  # yeni köprü okumaz: ayna yok
+    """Eski köprünün aynası (hazirla_kopru kurar). Yeni köprü (Worker ya da aktarıcısı) okumaz, ayna kurmaz: `cf`
+    anahtarı ağsız, aktarıcı anahtarı ayna yoksa `kim` ile anlaşılır (hatası olduğu gibi yükselir). Ayna varsa ağa
+    gidilmez (kb.py aynada her çalıştığında köprü sorulmasın)."""
+    if cf_anahtari_mi():
         raise Stop(KOPRU_OKUMA_YOK)
     kok = ayna_koku()
     if not (kok / ".kb.json").is_file() or not (kok / AYNA_KISI).is_file():
+        if yeni_kopru_mu():
+            raise Stop(KOPRU_OKUMA_YOK)
         raise Stop(f"TF Bilgi köprü önbelleği yok ({kok}); önce `tf_bilgi.py hazirla` çalışmalı.")
     depo_ayari(kok, "ekip")
     return kok
@@ -3515,38 +3537,70 @@ def zil_cal(alan, notlar):
         return False
 
 
-def hizli_alan(args, not_metni):
-    """Alan seçimi → (alan, alıcılar | None, gh girişi | _HESAPLA, Worker `kim` yanıtı | None). --yonetim / --ekip
-    açıkça verildiyse o; değilse sözleşme §3 (alan_sec). Kural 4 ya da 1'in kelimesi yoksa gönderen ve kisiler gerekir:
-    GitHub'dan okuyabilenin kisiler.json'u (bir gün önbellekte), değilse Worker anahtarlının `kim` yanıtı (ad ve
-    alanlar; eski köprüde yalnız gönderen). Hiçbiri yoksa kisiler boş: alıcı bulunmaz, gönderen bilinmez → ekip."""
+def alan_karari(args, not_metni):
+    """Alan seçimi → ({alan, alicilar, neden}, gh girişi | _HESAPLA, köprünün `kim` yanıtı | None). --yonetim / --ekip
+    açıkça verildiyse o; değilse sözleşme §3 (alan_sec). Kural 4 ya da 1'in kelimesi yoksa gönderen ve kişi listesi
+    gerekir: GitHub'dan okuyabilenin kisiler.json'u (bir gün önbellekte), değilse köprü anahtarlının `kim` yanıtı (ad
+    ve alanlar). Liste yüklenemezse (GitHub o an yanıt vermedi, köprü hata döndü) hiçbir şey gönderilmez: belirsizlikte
+    ekip seçilmez (review #15). Hiçbir yol yoksa (gh girişi de anahtar da yok) karar ekip kalır; gönderim yolu zaten
+    tek satırla durur."""
     if args.yonetim or args.ekip:
-        return ("yonetim" if args.yonetim else "ekip"), None, _HESAPLA, None
-    if ekip_icin_mi(not_metni) or yonetim_kelimesi(not_metni):
-        return alan_sec(not_metni, None, {})["alan"], None, _HESAPLA, None
+        alan = "yonetim" if args.yonetim else "ekip"
+        return {"alan": alan, "alicilar": None, "neden": f"--{alan} verildi"}, _HESAPLA, None
+    if ekip_icin_mi(not_metni) or yonetim_kelimesi(not_metni):  # kural 4 / 1: kişi listesi gerekmez, alıcı aranmaz
+        return {**alan_sec(not_metni, None, {}), "alicilar": None}, _HESAPLA, None
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
-    login, kisiler, ben, kim = _HESAPLA, {}, None, None
+    login, kisiler, ben, kim, hata = _HESAPLA, {}, None, None, None
     slug = hizli_slug("ekip")
     if zorla != "kopru" and slug and which("gh"):
         login = gh_login()
         if login:
             try:
                 kisiler = hizli_kisiler(slug)
-                ben = kisi_eslestir(kisiler, login, [], git_eposta)[0]
-            except Stop:  # depoyu okuyamıyor (GhHatasi) ya da kimlik çelişkisi (yazan yolu ayrıca durdurur)
-                kisiler, ben = {}, None
+            except GhHatasi as e:
+                kisiler = {}
+                if e.http != 404:  # depo görünmüyor değil: GitHub o an yanıt vermedi
+                    hata = Stop(f"Kişi listesi GitHub'dan okunamadı ({tek_satir(str(e), 200)}); ekip mi yönetim mi "
+                                "seçilemedi, hiçbir şey gönderilmedi. Biraz sonra tekrar dene.")
+            if kisiler:
+                try:
+                    ben = kisi_eslestir(kisiler, login, [], git_eposta)[0]
+                except Stop:  # kimlik çelişkisi: yazan yolu ayrıca durdurur
+                    ben = None
     if not kisiler and zorla != "dogrudan" and anahtar_yolu().is_file():
-        try:
-            kim = kopru_kim()
-        except Stop:  # köprü şu an yanıt vermiyor: gönderimde aynı hata açıkça söylenir
-            kim = None
-        if kim:
-            kisiler = kim.get("kisiler") if isinstance(kim.get("kisiler"), dict) else {}
-            ben = kim.get("kisi") if isinstance(kim.get("kisi"), str) else None
-    sonuc = alan_sec(not_metni, ben, kisiler)
-    return sonuc["alan"], sonuc["alicilar"], login, kim
+        kim = kopru_kim()  # hata olduğu gibi yükselir (köprünün mesajı ya da bağlantı hatası); çalıştırmada bir kez
+        kisiler = kim.get("kisiler") if isinstance(kim.get("kisiler"), dict) else {}
+        ben = kim.get("kisi") if isinstance(kim.get("kisi"), str) else None
+        hata = None
+    if not kisiler and hata:
+        raise hata
+    return alan_sec(not_metni, ben, kisiler), login, kim
 
 
+def hizli_alan(args, not_metni):
+    """(alan, alıcılar | None, gh girişi | _HESAPLA, `kim` | None): alan_karari'nın hızlı yol biçimi."""
+    karar, login, kim = alan_karari(args, not_metni)
+    return karar["alan"], karar["alicilar"], login, kim
+
+
+def alan_komutu(argv):
+    """`alan` alt komutu, salt okuma: gönderenin sözlerinden (--not-dosya) alan kararı (sözleşme §3) → {alan, alicilar, neden}. Gizli
+    paylaşım bunu `hazirla`'dan önce çağırır (anahtar kelime listesi değil, /paylas'la aynı kural). Yazmaz, göndermez."""
+    parser = argparse.ArgumentParser(prog="tf_bilgi.py alan")
+    alan_grubu = parser.add_mutually_exclusive_group()
+    alan_grubu.add_argument("--yonetim", action="store_true", help="yönetim alanı (§3 kuralını ezer)")
+    alan_grubu.add_argument("--ekip", action="store_true", help="ekip alanı (§3 kuralını ezer)")
+    parser.add_argument("--not-dosya", dest="not_dosya",
+                        help="kullanıcının kendi sözleri: gecici/ altında, Write aracıyla yazılmış dosya")
+    args = parser.parse_args(argv)
+    not_metni = ""
+    if args.not_dosya:
+        yol = gecici_alti(args.not_dosya, "--not-dosya")
+        if not yol.is_file():
+            raise Stop(f"Not dosyası yok: {args.not_dosya}")
+        not_metni = yol.read_bytes().decode("utf-8", "replace")
+    karar, _, _ = alan_karari(args, not_metni)
+    return {"alan": karar["alan"], "alicilar": karar["alicilar"], "neden": karar["neden"]}
 
 
 def hizli_taslagi(haber):
@@ -3923,8 +3977,10 @@ def tercih_kopru(args):
 KOMUTLAR = {"hazirla": hazirla, "gecici": gecici, "maskele": maskele, "temizle": temizle, "yaz": yaz,
             "kaydet": kaydet, "prler": prler, "bildirim-plani": bildirim_plani, "tercih": tercih,
             "gizli-alicilar": gizli_alicilar, "yorum": yorum, "yorumlar": yorumlar, "kur": kur, "gonder": gonder,
-            "geri-al": geri_al, "oku": oku, "ara": ara, "girdi": girdi, "alindi": alindi, "hizli": hizli}
-KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim] [--haber simdi] [--otomatik] [--not-dosya F] [--ek YOL]... | "
+            "geri-al": geri_al, "oku": oku, "ara": ara, "girdi": girdi, "alindi": alindi, "hizli": hizli,
+            "alan": alan_komutu}
+KULLANIM = ("kullanım: tf_bilgi.py hizli [--yonetim | --ekip] [--otomatik] [--not-dosya F] [--ek YOL]... | "
+            "alan [--yonetim | --ekip] [--not-dosya F] | "
             "hazirla [--yonetim] [--yazma] | kb [--yonetim] <komut> ... | gecici AD | "
             "maskele [--yonetim] DOSYA [--dizin D] | temizle YOL... | yaz [--yonetim] [--dosya F] [--uzerine] | "
             "kaydet [--yonetim] (--mesaj M | --mesaj-dosya F) YOL... | prler [REF...] [--repo R] | "

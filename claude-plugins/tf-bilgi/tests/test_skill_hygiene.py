@@ -189,8 +189,9 @@ class SkillShellHygieneTest(unittest.TestCase):
     def test_paylas_areas_modes_and_targets(self):
         paylas = metin(PAYLAS)
         adim5 = paylas.split("\n5. ", 1)[1].split("\n6. ", 1)[0]
-        gizli = metin(GIZLI)
-        for govde in (adim5, gizli):  # review: "hesap yöneticisi" gibi tamlamalar yönetime göndermez
+        # review: "hesap yöneticisi" gibi tamlamalar yönetime göndermez (yalnız bilgi; kararı yardımcı verir). Gizli kip
+        # kelime listesi taşımaz, alanı `TFB alan` ile yardımcıdan alır (review #15; test_gizli_area_comes_from_the_helper_rule)
+        for govde in (adim5,):
             duz = " ".join(govde.split())
             for parca in YONETIM_SOZLERI + YONETIM_DEGIL:
                 self.assertIn(parca, duz, parca)
@@ -248,6 +249,13 @@ class SkillShellHygieneTest(unittest.TestCase):
         self.assertIn("**Sır paylaşımı engellemez**", siniflama)
         self.assertNotIn('"güvenlik ayrıntısı"', siniflama)
         self.assertNotIn('"influencer kimliği"', siniflama)  # artık ham engeli değil
+
+    def test_gizli_area_comes_from_the_helper_rule(self):
+        gizli = metin(GIZLI)
+        self.assertIn("`TFB alan --not-dosya '<that path>'`", gizli)
+        self.assertIn("the helper decides, never you", gizli)
+        self.assertNotIn("everything else is", gizli)  # eski anahtar kelime listesi kararı
+        self.assertLess(gizli.index("TFB alan --not-dosya"), gizli.index("TFB hazirla --yazma"))
 
     def test_readme_describes_the_instant_share(self):
         readme = (PLUGIN.parents[1] / "README.md").read_text(encoding="utf-8")

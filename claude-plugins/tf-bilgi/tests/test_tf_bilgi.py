@@ -3240,6 +3240,28 @@ class HizliTest(Base):
             self.assertFalse(tf_bilgi.zil_cal("ekip", notlar))  # her hata yutulur
         self.assertEqual(notlar, ["Zil çalınamadı; kütüphaneci bir sonraki turda dosyalar."])
 
+    def test_rehber_okunamazsa_yazan_ekibe_yazmaz(self):
+        """review #15: kisiler.json GitHub'dan o an okunamazsa "Dilara'ya …" sessizce ekibe gitmez; durur."""
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"]["dilara"] = {"ad": "Dilara Örnek", "alanlar": ["ekip", "yonetim"]}
+        self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
+        once = {s: self.gh.depolar[s]["ref"] for s in (self.EKIP, self.YONETIM)}
+        self.gh.hatalar[("GET", f"repos/{self.EKIP}/contents/kisiler.json")] = 502
+        out = self.stop("hizli", stdin="Dilara'ya bütçe tablosu\n")
+        self.assertIn("Kişi listesi GitHub'dan okunamadı", out)
+        self.assertIn("hiçbir şey gönderilmedi", out)
+        self.assertEqual({s: self.gh.depolar[s]["ref"] for s in once}, once)  # iki depoya da commit yok
+        self.assertEqual(self.zil_cagrilari(), [])
+        del self.gh.hatalar[("GET", f"repos/{self.EKIP}/contents/kisiler.json")]
+        r = self.hizli(not_metni="Dilara'ya bütçe tablosu\n")  # GitHub düzelince yönetime
+        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        self.assertEqual(self.gh.depolar[self.EKIP]["ref"], once[self.EKIP])
+        # depo görünmüyor (404): okuyamayan ve anahtarsız kişi zaten gönderemez, tek satırla durur
+        self.gh.hatalar[("GET", f"repos/{self.EKIP}/contents/kisiler.json")] = 404
+        (self.cache / "hizli.json").unlink()
+        os.environ["FAKE_GH_PUSH"] = "false"
+        self.assertEqual(self.stop("hizli", stdin="Dilara'ya bütçe\n").strip(), tf_bilgi.HIZLI_YOL_YOK)
+
     def test_alan_kurali_yazanda(self):
         """§3: --yonetim/--ekip verilmezse alan nottan, gönderenden ve kisiler.json'dan seçilir."""
         kisiler = json.loads(json.dumps(KISILER))
@@ -3590,6 +3612,25 @@ class WorkerKopruTest(Base):
         os.environ["TF_BILGI_YOL"] = "kopru"
         self.assertEqual(tf_bilgi.yol_sec(), "kopru")
 
+    def test_gh_girisi_var_ama_yazamiyor_koprude_kalir(self):
+        """review #15: anahtar sahibinin gh girişi tek başına doğrudan yol değildir; push doğrulanmalı."""
+        os.environ.update({"FAKE_GH_LOGIN": "mert-gh", "FAKE_GH_PUSH": "false"})
+        self.assertEqual(tf_bilgi.yol_sec(), "kopru")
+        self.assertEqual(self.stop("hazirla", "--yazma").strip(), tf_bilgi.KOPRU_YALNIZ_PAYLAS)
+        self.assertEqual(self.stop("hazirla").strip(), OKUMA_YOK)
+        self.assertNotIn(tf_bilgi.BOT_YOLU, self.stop("hazirla", "--yazma"))
+
+    def test_parca_http_hatasi_mesaji(self):
+        dosya = self.ek("r.md", "0123")
+
+        def ham_502(adres, veri, basliklar, zaman_asimi):
+            raise tf_bilgi.urllib.error.HTTPError(adres, 502, "Bad Gateway", {}, None)
+
+        with mock.patch.object(tf_bilgi, "kopru_ham_tasi", ham_502):
+            out = self.stop("hizli", "--ekip", "--ek", dosya)
+        self.assertIn("Gönderim yarıda kaldı: TF Bilgi köprüsü yanıt vermedi (HTTP 502)", out)
+        self.assertIn("kaydı durdurdum", out)
+
     def test_kur_cf1_anahtari(self):
         (self.cache / "anahtar").unlink()
         dosya = self.cache / "gecici" / "anahtar.txt"
@@ -3676,6 +3717,7 @@ class AktariciKopruTest(WorkerKopruTest):
     # WorkerKopruTest'in cf1'e özgü testleri burada çalışmaz: yalnız aşağıdakiler
     test_anahtar_bicimi_ve_adres = test_paylas_ham_parcalar_ve_makbuz = test_parca_yeniden_denenir_kalici_hata_geri_alir = None
     test_kopru_url_ezer_ve_ayar_hatasi_aynen = test_kur_cf1_anahtari = test_okuma_desteklenmiyor_sade_cumle = None
+    test_parca_http_hatasi_mesaji = None  # aktarıcıya ham parça gitmez
 
     def test_aktarici_json_parcalar_uc_uca(self):
         buyuk = bytes(range(256)) * (3 * 4096 + 17)  # 3 MB'tan büyük: 2 parça
@@ -3707,8 +3749,9 @@ class AktariciKopruTest(WorkerKopruTest):
         self.assertEqual(self.stop("ara", "abonelik").strip(), OKUMA_YOK)
         self.assertIn("yalnız /paylas çalışır", self.stop("gonder", "--taslak", "/x/taslak.json"))
         os.environ["FAKE_GH_LOGIN"] = "mert-gh"
-        self.assertEqual(tf_bilgi.yol_sec(), "dogrudan")  # yeni köprü + GitHub girişi: okuma doğrudan
+        self.assertEqual(tf_bilgi.yol_sec(), "dogrudan")  # yeni köprü + depoya yazan (push doğrulandı): doğrudan
         os.environ["FAKE_GH_LOGIN"] = ""
+        (self.cache / "hizli.json").unlink()  # yazan önbelleği bu makineden silinir: aşağısı GitHub'sız kişi
         self.worker.cagrilar.clear()
         r = self.ok("hizli", "--yonetim", stdin="bütçe")  # aktarıcı anahtarı yönetime de gönderir
         self.assertEqual((r["alan"], self.worker.islemler("baslat")[0]["alan"]), ("yonetim", "yonetim"))
@@ -3723,6 +3766,57 @@ class AktariciKopruTest(WorkerKopruTest):
         self.assertIn("belgeler sana Slack'ten bağlantıyla gelir", r["satir"])
         self.assertEqual(self.worker.adresler, [AKTARICI_ADRES])
         self.assertEqual(len(self.worker.islemler("kim")), 1)
+
+    def test_kim_hatasi_yonetimde_aynen_soylenir(self):
+        self.worker.hatalar["kim"] = ("Köprü kurulumu bitmedi; Enes'e haber ver.", "ayar")
+        out = self.stop("hizli", stdin="yönetim için bütçe\n").strip()
+        self.assertEqual(out, "Köprü kurulumu bitmedi; Enes'e haber ver.")  # "anahtar eski" değil
+        self.assertEqual(len(self.worker.islemler("kim")), 1)
+
+    def test_rehber_yuklenemezse_ekibe_dusmez(self):
+        gercek_kim, sayac = self.worker.i_kim, {"n": 0}
+
+        def ilk_kim_duser(g):
+            sayac["n"] += 1
+            if sayac["n"] == 1:
+                raise KopruRet("Worker'a ulaşılamadı.", "drive")
+            return gercek_kim(g)
+
+        self.worker.i_kim = ilk_kim_duser
+        code, out = self.run_main("hizli", stdin="Dilara'ya bütçe tablosu\n")
+        self.assertFalse([b for b in self.worker.islemler("baslat") if b.get("alan") == "ekip"], out)
+        self.assertTrue(code == 2 or json.loads(out)["alan"] == "yonetim", out)
+        self.assertEqual((code, out.strip()), (2, "Worker'a ulaşılamadı."))
+        self.assertEqual(self.worker.islemler("baslat"), [])
+        self.assertEqual(len(self.worker.islemler("kim")), 1)  # hata da önbellekte: aynı çalıştırmada yeniden sorulmaz
+        r = self.ok("hizli", stdin="Dilara'ya bütçe tablosu\n")  # sonraki çalıştırma: köprü düzeldi
+        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+
+    def test_kim_ag_hatasi_bir_kez_ve_kisa_zaman_asimi(self):
+        asimlar = []
+
+        def kopuk(adres, veri, zaman_asimi):
+            asimlar.append(zaman_asimi)
+            raise tf_bilgi.urllib.error.URLError("bağlantı koptu")
+
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopuk):
+            out = self.stop("hizli", stdin="Dilara'ya bütçe\n")
+        self.assertIn("TF Bilgi köprüsüne ulaşılamadı", out)
+        self.assertEqual(asimlar, [tf_bilgi.KIM_ZAMAN_ASIMI])  # kim bir kez, kısa zaman aşımıyla
+        self.assertEqual(tf_bilgi.KIM_ZAMAN_ASIMI, 20)
+        with mock.patch.object(tf_bilgi, "kopru_tasi", kopuk):
+            self.assertIn("TF Bilgi köprüsüne ulaşılamadı", self.stop("hazirla"))  # "anahtar eski" ya da önbellek değil
+
+    def test_alan_komutu_gizli_icin(self):
+        notu = self.cache / "gecici" / "not.txt"
+        notu.parent.mkdir(parents=True, exist_ok=True)
+        notu.write_text("gizli: Dilara'ya, yalnız o görsün\n")
+        r = self.ok("alan", "--not-dosya", str(notu))
+        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        self.assertTrue(r["neden"].startswith("kural 2"))
+        self.assertEqual(self.ok("alan", "--ekip", "--not-dosya", str(notu))["alan"], "ekip")
+        self.worker.hatalar["kim"] = ("Köprü kurulumu bitmedi; Enes'e haber ver.", "ayar")
+        self.assertEqual(self.stop("alan", "--not-dosya", str(notu)).strip(), "Köprü kurulumu bitmedi; Enes'e haber ver.")
 
     def test_kim_onbellegi_calistirma_basina(self):
         self.ok("hizli", "--ekip", stdin="bir")

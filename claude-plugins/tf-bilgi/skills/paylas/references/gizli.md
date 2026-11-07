@@ -21,14 +21,16 @@ Turkish message: relay it as-is and stop. `TFB kb ...` passes kb.py through (0 o
 - **Only new files.** The repo is changed only through `TFB yaz` and `TFB kaydet`
   (doğrudan) or `TFB gonder` (köprü). Never Write/Edit in the cache clone or the köprü
   mirror, never run git yourself. `yazar` is the resolved person key, never `claude`.
-- **Area.** yönetim for these whole words and case forms like yönetimle, yöneticiye:
-  yönetim, yönetime, "yönetim için", yönetici, yöneticiler, yöneticilere, C-level,
-  `--yonetim` (not compounds such as "hesap yöneticisi", "proje yöneticisi",
-  "yöneticisine", "yönetim paneli"); everything else is
-  ekip. Gizli mode needs the repo path (doğrudan) or an old köprü key; the TF Bilgi bridge
-  key from the Slack bot (Worker or its Apps Script relay) does not take gizli shares: `hazirla` says so;
-  relay it (the Slack bot keeps its own gizli mode). On the köprü path there is no
-  yönetim: `hazirla --yonetim` refuses; relay it.
+- **Area: the helper decides, never you** (the same deterministic rule as `/paylas`, KB §3:
+  yönetim words, recipients named in the words, the sender). Write the user's own words verbatim
+  to `~/.tf-bilgi/gecici/not-<YYYYMMDD-HHMMSS>.txt` (absolute path) with the Write tool, then run
+  `TFB alan --not-dosya '<that path>'` (read-only; add `--yonetim` or `--ekip` only when the user
+  typed that flag). Use its `alan`; for `yonetim` put `--yonetim` right after the subcommand in
+  every later call. Exit 2 → relay the message as-is and stop (nothing is decided by guessing).
+  Gizli mode needs the repo path (doğrudan) or an old köprü key; the TF Bilgi bridge key from the
+  Slack bot (Worker or its Apps Script relay) does not take gizli shares: `hazirla` says so; relay
+  it (the Slack bot keeps its own gizli mode). On the köprü path there is no yönetim:
+  `hazirla --yonetim` refuses; relay it.
 - **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay the
   message as-is and stop. Keep `yol` (`kopru` or `dogrudan`), `kok` (on the köprü path the
   mirror the helper downloaded), `alan`, `kisi`, `uzak`, `bugun`, `takvim`, `gecici`,
