@@ -1,5 +1,5 @@
 {
- "_not": "Herkese açık kopya: KB deposu (özel) araclar/alici_vektorleri.json, sha256 a1d95e9ecc453911…; soyadları ve gerçek bağlantı kimlikleri takma değerdir (eklenti deposu herkese açık). Kurallar ve beklenen sonuçlar birebir aynı. TF Bilgi alan kuralının (ekip mi yönetim mi) ortak test vektörleri. Sözleşme: pm/04-projeler/tf-bilgi/oturum-dosyalari/2026-11-07-bitis-tasarim.md §3. Python (araclar/alici.py, eklentideki tf_bilgi.py) ve JS (Worker, mail betiği) uygulamaları bu dosyadaki her vektörde aynı `alan` ve `alicilar`'ı vermelidir. Girdi: `metin` = gönderenin kendi sözleri (belgenin içi değil), `gonderen` = kisiler.json anahtarı ya da null (bilinmeyen), `kisiler` = bu dosyadaki rehber (kisiler.json'un `ad` alanları; gerçek kisiler.json ile aynı adlar). Çıktı: `alan` (ekip | yonetim), `alicilar` (sözlerde adı geçen kişi anahtarları, gönderen hariç, alfabetik). ALGORİTMA: (a) Metinden http(s) bağlantıları (/https?:\\/\\/\\S+/i) atılır; katlamadan (b) sonra TF Bilgi kimlikleri de atılır: /(?<![a-z0-9])([a-z]{1,3}-\\d{8}-[a-z][a-z0-9]*(-\\d{2,3})?|[a-z]{1,3}-\\d{4}|g-[a-z0-9]{6})(?![a-z0-9])/ (girdi B-20261105-enes-03, BY-…, paket P-20261105-enes, konu K-0007, KY-…, kod G-ab12cd; içlerindeki kişi anahtarı ad sayılmaz). (b) Katlama: NFC, Türkçe harfler ASCII'ye (ş→s, ı/İ/I→i, ğ→g, ü→u, ö→o, ç→c), NFKD + birleşik işaretler atılır, küçük harf; kesme işaretleri (’ ‘ ` ´ ʼ) ' olur. (c) Kelimeler: /([a-z0-9]+)('[a-z0-9]*)?/ ; kesme işaretinden sonrası ektir, yok sayılır. (d) Kural 4: '--ekip' (başta ya da boşluktan sonra) ya da 'ekip icin' → ekip. (e) Kural 1: '--yonetim', /(?<![a-z0-9])c ?-? ?level(?![a-z0-9])/ ya da `yonetim_kelimeleri`'nden biri tam kelime (c'deki kelime: kesme işaretinden önceki kısım) → yonetim. Liste 'yonetim' ve 'yonetici' köklerinin izinli çekimleridir (yönetime, yönetimle, yönetimin, yönetimde, yönetimce, yönetimdeki…; yöneticiye, yöneticiler, yöneticilere, yöneticilerle, yöneticilerimize…); iyelik/tamlama biçimleri ('yöneticisi', 'yöneticisine', 'yöneticimiz', 'yönetiminde') listede olmadığı için sayılmaz ('hesap yöneticisi', 'proje yöneticimiz'). İki istisna: 'yonetim' kelimesinden hemen sonraki kelime `yonetim_tamlama_basi`'ndan biriyle BAŞLIYORSA ('yönetim paneli') ve `yonetim_iyelik_belirsiz`'deki bir kelime (belirtme hâli de iyelik de olabilir) yalnız metnin ilk kelimesiyse, önceki kelime `yonetim_belirtme_oncesi`'ndeyse ('üst yönetimi') ya da sonraki en çok 3 kelimeden biri `yonetim_belirtme_fiilleri`'nden biriyle BAŞLIYORSA ('yönetimi bilgilendir') sayılır; aksi hâlde tamlamadır ('kampanya yönetimi', 'başvuru yönetimi') ve sayılmaz. (f) Adlar: her kişinin takma adları = anahtarı, katlanmış adının ilk kelimesi ve (birden çok kelimeyse) tam adı. Tam ad önce denenir: ardışık kelimeler birebir (ara kelimelerde kesme yok), son kelime ek kuralıyla; eşleşirse o kelimeler tüketilir. Tek kelime: kelime == takma ad, ya da kesmesiz kelime = takma ad + `ekler`'den biri ('dilaraya'). Bir kelimeye uyan bütün takma adların kişileri birleşir; tek kişiyse alıcıdır, birden çoksa ('oguzhan' → oguzhan ve ogi) sayılmaz. Gönderen alıcılardan çıkar. (g) Kural 2: alıcı varsa: hepsi `yonetimi_gorenler`'de ve en az biri `yonetim_kisileri`'nde → yonetim, değilse ekip. (h) Kural 3: alıcı yoksa gönderen `yalniz_yonetim`'deyse yonetim, değilse ekip. Sıra: 4, 1, 2, 3. Kişi listeleri Enes kararıdır (7 Kas 2026; Ilgım ve Dilara asıl, Enes ve Ogi ikinci seviye yönetici, dördü de yönetim kişisi).",
+ "_not": "Herkese açık kopya: KB deposu (özel) araclar/alici_vektorleri.json (son eşitleme KB 6a0b69c + review #16'nın iki vektörü; vektör sırası, alan ve alıcılar birebir aynı); soyadları ve gerçek bağlantı kimlikleri takma değerdir (eklenti deposu herkese açık). Kurallar ve beklenen sonuçlar birebir aynı. TF Bilgi alan kuralının (ekip mi yönetim mi) ortak test vektörleri. Sözleşme: pm/04-projeler/tf-bilgi/oturum-dosyalari/2026-11-07-bitis-tasarim.md §3. Python (araclar/alici.py, eklentideki tf_bilgi.py) ve JS (Worker, mail betiği) uygulamaları bu dosyadaki her vektörde aynı `alan` ve `alicilar`'ı vermelidir. Girdi: `metin` = gönderenin kendi sözleri (belgenin içi değil), `gonderen` = kisiler.json anahtarı ya da null (bilinmeyen), `kisiler` = bu dosyadaki rehber (kisiler.json'un `ad` alanları; gerçek kisiler.json ile aynı adlar). Çıktı: `alan` (ekip | yonetim), `alicilar` (sözlerde adı geçen kişi anahtarları, gönderen hariç, alfabetik). ALGORİTMA: (a) Metinden http(s) bağlantıları (/https?:\\/\\/\\S+/i) atılır; katlamadan (b) sonra TF Bilgi kimlikleri de atılır: /(?<![a-z0-9])([a-z]{1,3}-\\d{8}-[a-z][a-z0-9]*(-\\d{2,3})?|[a-z]{1,3}-\\d{4}|g-[a-z0-9]{6})(?![a-z0-9])/ (girdi B-20261105-enes-03, BY-…, paket P-20261105-enes, konu K-0007, KY-…, kod G-ab12cd; içlerindeki kişi anahtarı ad sayılmaz). (b) Katlama: NFC, Türkçe harfler ASCII'ye (ş→s, ı/İ/I→i, ğ→g, ü→u, ö→o, ç→c), NFKD + birleşik işaretler atılır, küçük harf; kesme işaretleri (’ ‘ ` ´ ʼ) ' olur. (c) Kelimeler: /([a-z0-9]+)('[a-z0-9]*)?/ ; kesme işaretinden sonrası ektir, yok sayılır. (d) Kural 4: '--ekip' (başta ya da boşluktan sonra) ya da 'ekip icin' → ekip. (e) Kural 1: '--yonetim', /(?<![a-z0-9])c ?-? ?level(?![a-z0-9])/ ya da `yonetim_kelimeleri`'nden biri tam kelime (c'deki kelime: kesme işaretinden önceki kısım) → yonetim. Liste 'yonetim' ve 'yonetici' köklerinin izinli çekimleridir (yönetime, yönetimle, yönetimin, yönetimde, yönetimce, yönetimdeki…; yöneticiye, yöneticiler, yöneticilere, yöneticilerle, yöneticilerimize…); iyelik/tamlama biçimleri ('yöneticisi', 'yöneticisine', 'yöneticimiz', 'yönetiminde') listede olmadığı için sayılmaz ('hesap yöneticisi', 'proje yöneticimiz'). İki istisna: 'yonetim' kelimesinden hemen sonraki kelime `yonetim_tamlama_basi`'ndan biriyle BAŞLIYORSA ('yönetim paneli') ve `yonetim_iyelik_belirsiz`'deki bir kelime (belirtme hâli de iyelik de olabilir) yalnız metnin ilk kelimesiyse, önceki kelime `yonetim_belirtme_oncesi`'ndeyse ('üst yönetimi') ya da sonraki en çok 3 kelimeden biri `yonetim_belirtme_fiilleri`'nden biriyle BAŞLIYORSA ('yönetimi bilgilendir') sayılır; aksi hâlde tamlamadır ('kampanya yönetimi', 'başvuru yönetimi') ve sayılmaz. (f) Adlar: her kişinin takma adları = anahtarı, katlanmış adının ilk kelimesi ve (birden çok kelimeyse) tam adı. Tam ad önce denenir: ardışık kelimeler birebir (ara kelimelerde kesme yok), son kelime ek kuralıyla; eşleşirse o kelimeler tüketilir. Tek kelime: kelime == takma ad, ya da kesmesiz kelime = takma ad + `ekler`'den biri ('dilaraya'). Bir kelimeye uyan bütün takma adların kişileri birleşir; tek kişiyse alıcıdır, birden çoksa ('oguzhan' → oguzhan ve ogi) sayılmaz. Gönderen alıcılardan çıkar. (g) Kural 2: alıcı varsa: gönderen `yonetim_kisileri`'nde VE alıcıların hepsi `yonetim_kisileri`'nde → yonetim (yönetim kendi arasında), değilse ekip (ekipten yöneticiye 'bakar mısın' ekipte kalır). (h) Kural 3: alıcı yoksa gönderen `yalniz_yonetim`'deyse yonetim, değilse ekip. Sıra: 4, 1, 2, 3. Kişi listeleri Enes kararıdır (7 Kas 2026; Ilgım ve Dilara asıl, Enes ve Ogi ikinci seviye yönetici, dördü de yönetim kişisi).",
  "yonetim_kisileri": [
   "ilgim",
   "dilara",
@@ -244,7 +244,7 @@
   {
    "metin": "Enes'e inceleme lazım",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "enes"
    ]
@@ -252,7 +252,7 @@
   {
    "metin": "ENES'E acil bakış lazım",
    "gonderen": "ceren",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "enes"
    ]
@@ -260,7 +260,7 @@
   {
    "metin": "Ilgım'a, karar lazım",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "ilgim"
    ]
@@ -268,7 +268,7 @@
   {
    "metin": "Enes ve Ilgım'a bilgi",
    "gonderen": "oguz",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "enes",
     "ilgim"
@@ -294,7 +294,7 @@
   {
    "metin": "dilaraya sunum taslağı",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "dilara"
    ]
@@ -324,7 +324,7 @@
   {
    "metin": "Oğuzhan Arslan'a growth planı",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "ogi"
    ]
@@ -349,7 +349,7 @@
   {
    "metin": "Dilara'yla Ogi'nin onayı lazım",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "dilara",
     "ogi"
@@ -450,7 +450,7 @@
   {
    "metin": "Rapor https://claude.ai/artifact/OrnekArtifactKimligi01 Enes'e karar lazım",
    "gonderen": "ozan",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "enes"
    ]
@@ -488,7 +488,7 @@
   {
    "metin": "Re: B-20261105-nil-02, Enes'e karar lazım",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "enes"
    ]
@@ -642,10 +642,36 @@
   {
    "metin": "Ilgım'a PR listesi, merge sırası",
    "gonderen": "abdullah",
-   "alan": "yonetim",
+   "alan": "ekip",
    "alicilar": [
     "ilgim"
    ]
-  }
+  },
+  {
+   "metin": "Enes'e PDF gönderdim, bakar mısın",
+   "gonderen": "abdullah",
+   "alan": "ekip",
+   "alicilar": [
+    "enes"
+   ]
+  },
+  {
+   "metin": "Dilara'ya yatırımcı sunumu",
+   "gonderen": "ilgim",
+   "alan": "yonetim",
+   "alicilar": [
+    "dilara"
+   ]
+  },
+  {
+   "metin": "Enes'e maaş tablosu, yönetim için",
+   "gonderen": "irem",
+   "alan": "yonetim",
+   "alicilar": [
+    "enes"
+   ]
+  },
+  {"metin": "Enes ve Dilara'ya yatırımcı sunumu", "gonderen": null, "alan": "ekip", "alicilar": ["dilara", "enes"]},
+  {"metin": "Enes ve Abdullah'a", "gonderen": "ilgim", "alan": "ekip", "alicilar": ["abdullah", "enes"]}
  ]
 }

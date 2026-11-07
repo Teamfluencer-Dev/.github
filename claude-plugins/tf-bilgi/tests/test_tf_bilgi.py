@@ -3240,11 +3240,35 @@ class HizliTest(Base):
             self.assertFalse(tf_bilgi.zil_cal("ekip", notlar))  # her hata yutulur
         self.assertEqual(notlar, ["Zil çalınamadı; kütüphaneci bir sonraki turda dosyalar."])
 
-    def test_rehber_okunamazsa_yazan_ekibe_yazmaz(self):
-        """review #15: kisiler.json GitHub'dan o an okunamazsa "Dilara'ya …" sessizce ekibe gitmez; durur."""
+    def yonetim_gonderen(self):
+        """Gönderen yönetim kişisi Ilgım (gh ilgim-gh), alıcı adayı Dilara; iki depoda da kisiler.json'da."""
         kisiler = json.loads(json.dumps(KISILER))
-        kisiler["kisiler"]["dilara"] = {"ad": "Dilara Örnek", "alanlar": ["ekip", "yonetim"]}
-        self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
+        kisiler["kisiler"].update({"dilara": {"ad": "Dilara Örnek", "alanlar": ["ekip", "yonetim"]},
+                                   "ilgim": {"ad": "Ilgım Örnek", "alanlar": ["ekip", "yonetim"], "github": "ilgim-gh"}})
+        for depo in (self.EKIP, self.YONETIM):
+            self.gh.baskasi_yazar(depo, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
+        os.environ["FAKE_GH_LOGIN"] = "ilgim-gh"
+
+    def test_yonetim_kendi_arasinda_yazanda_uctan_uca(self):
+        """review #16: kural 2 yönetimden yönetime → yönetim deposu ve zil #10; ekipten aynı not → ekip."""
+        self.yonetim_gonderen()
+        r = self.hizli(not_metni="Dilara'ya yatırımcı sunumu\n")
+        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        meta = json.loads(self.kayit(self.YONETIM, r["kod"])["meta.json"])
+        self.assertEqual((meta["alan"], meta["gonderen"]), ("yonetim", "ilgim"))
+        self.assertEqual(self.kayit(self.EKIP, r["kod"]), {})
+        self.assertEqual(self.zil_cagrilari()[-1][1], f"repos/{self.EKIP}/issues/10/labels")
+        r = self.hizli(not_metni="Dilara ve Mert'e\n")  # yönetim + ekip karışık alıcı → ekip
+        self.assertEqual((r["alan"], r["alicilar"]), ("ekip", ["dilara", "mert"]))
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"  # Ayşe yönetim kişisi değil: aynı not ekipte kalır
+        (self.cache / "hizli.json").unlink()
+        r = self.hizli(not_metni="Dilara'ya yatırımcı sunumu\n")
+        self.assertEqual((r["alan"], json.loads(self.kayit(self.EKIP, r["kod"])["meta.json"])["alan"]), ("ekip", "ekip"))
+
+    def test_rehber_okunamazsa_yazan_ekibe_yazmaz(self):
+        """review #15: kisiler.json GitHub'dan o an okunamazsa "Dilara'ya …" sessizce ekibe gitmez; durur. Gönderen yönetim
+        kişisi (ilgim): kişi listesiyle doğru cevap yönetimdir, düşülen ekip yanlış olurdu (review #16)."""
+        self.yonetim_gonderen()
         once = {s: self.gh.depolar[s]["ref"] for s in (self.EKIP, self.YONETIM)}
         self.gh.hatalar[("GET", f"repos/{self.EKIP}/contents/kisiler.json")] = 502
         out = self.stop("hizli", stdin="Dilara'ya bütçe tablosu\n")
@@ -3269,8 +3293,8 @@ class HizliTest(Base):
                                    "ilgim": {"ad": "Ilgım Örnek", "alanlar": ["ekip", "yonetim"]}})
         self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
         for notu, alan, alicilar in (("Yöneticilere haftalık özet", "yonetim", None),
-                                     ("Dilara'ya sunum, Cuma'ya kadar", "yonetim", ["dilara"]),
-                                     ("Ilgım'a karar lazım", "yonetim", ["ilgim"]),
+                                     ("Dilara'ya sunum, Cuma'ya kadar", "ekip", ["dilara"]),  # ekipten yöneticiye ekipte kalır
+                                     ("Ilgım'a karar lazım", "ekip", ["ilgim"]),
                                      ("Dilara ve Mert'e", "ekip", ["dilara", "mert"]),
                                      ("ekip için Dilara'ya", "ekip", None),
                                      ("Yönetim paneli hatası", "ekip", []),
@@ -3343,7 +3367,6 @@ class AlanKuraliTest(unittest.TestCase):
     def test_kural_parametreleri_ortak_dosyayla_ayni(self):
         v = ALICI_VEKTORLERI
         self.assertEqual(tf_bilgi.YONETIM_KISILERI, frozenset(v["yonetim_kisileri"]))
-        self.assertEqual(tf_bilgi.YONETIMI_GORENLER, frozenset(v["yonetimi_gorenler"]))
         self.assertEqual(tf_bilgi.YALNIZ_YONETIM, frozenset(v["yalniz_yonetim"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_KELIMELERI), tuple(v["yonetim_kelimeleri"]))
         self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAMA_BASI), tuple(v["yonetim_tamlama_basi"]))
@@ -3548,7 +3571,7 @@ class WorkerKopruTest(Base):
         self.assertEqual(json.loads((self.cache / "hizli.json").read_text())["gonderilen"][kod]["yol"], "kopru")
 
     def test_alan_kurali_koprude_kim_rehberiyle(self):
-        for notu, alan, alicilar in (("Ilgım'a karar lazım", "yonetim", ["ilgim"]), ("Dilara'ya sunum", "yonetim", ["dilara"]),
+        for notu, alan, alicilar in (("Ilgım'a karar lazım", "ekip", ["ilgim"]), ("Dilara'ya sunum", "ekip", ["dilara"]),
                                      ("Pazartesi notları", "ekip", []), ("C-level özeti", "yonetim", None)):
             r = self.ok("hizli", stdin=notu + "\n")
             self.assertEqual((r["alan"], r["alicilar"]), (alan, alicilar), notu)
@@ -3559,6 +3582,18 @@ class WorkerKopruTest(Base):
         self.assertEqual((r["alan"], self.worker.islemler("baslat")[-1]["alan"]), ("ekip", "ekip"))
         r = self.ok("hizli", "--yonetim", "--ek", self.ek("a.md", "a"))  # Worker anahtarı yönetime de gönderir
         self.assertEqual(self.worker.islemler("baslat")[-1]["alan"], "yonetim")
+
+    def test_alan_kurali_yonetim_kendi_arasinda_koprude(self):
+        self.worker.ben = "ilgim"  # yönetim kişisi → yönetim kendi arasında
+        r = self.ok("hizli", stdin="Dilara'ya yatırımcı sunumu\n")
+        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        self.assertEqual(self.worker.islemler("baslat")[-1]["alan"], "yonetim")
+        self.worker.ben = "mert"  # ekipten aynı not → ekip
+        r = self.ok("hizli", stdin="Dilara'ya yatırımcı sunumu\n")
+        self.assertEqual((r["alan"], self.worker.islemler("baslat")[-1]["alan"]), ("ekip", "ekip"))
+        self.worker.ben = "ilgim"  # yönetim + ekip karışık alıcı → ekip
+        r = self.ok("hizli", stdin="Dilara ve Mert'e\n")
+        self.assertEqual((r["alan"], r["alicilar"]), ("ekip", ["dilara", "mert"]))
 
     def test_parca_yeniden_denenir_kalici_hata_geri_alir(self):
         dosya = self.ek("rapor.md", "0123456789abc")  # 4 baytlık parçalar: 0..3
@@ -3723,6 +3758,7 @@ class AktariciKopruTest(WorkerKopruTest):
         buyuk = bytes(range(256)) * (3 * 4096 + 17)  # 3 MB'tan büyük: 2 parça
         dosya = self.ek("sunum.pdf", buyuk)
         self.worker.parca_drive[("sunum.pdf", 1)] = 1  # aktarıcı Worker'a ulaşamadı: aynı sıra yeniden gider
+        self.worker.ben = "ilgim"  # yönetim kendi arasında (review #16): Ilgım → Dilara yönetime
         r = self.ok("hizli", "--ek", dosya, stdin="Dilara'ya sunum\n")
         kod = r["kod"]
         self.assertEqual((r["yol"], r["alan"], r["alicilar"]), ("kopru", "yonetim", ["dilara"]))
@@ -3783,6 +3819,7 @@ class AktariciKopruTest(WorkerKopruTest):
             return gercek_kim(g)
 
         self.worker.i_kim = ilk_kim_duser
+        self.worker.ben = "ilgim"  # yönetim kişisi: kişi listesiyle doğru cevap yönetim, düşülen ekip yanlış olurdu
         code, out = self.run_main("hizli", stdin="Dilara'ya bütçe tablosu\n")
         self.assertFalse([b for b in self.worker.islemler("baslat") if b.get("alan") == "ekip"], out)
         self.assertTrue(code == 2 or json.loads(out)["alan"] == "yonetim", out)
@@ -3812,7 +3849,7 @@ class AktariciKopruTest(WorkerKopruTest):
         notu.parent.mkdir(parents=True, exist_ok=True)
         notu.write_text("gizli: Dilara'ya, yalnız o görsün\n")
         r = self.ok("alan", "--not-dosya", str(notu))
-        self.assertEqual((r["alan"], r["alicilar"]), ("yonetim", ["dilara"]))
+        self.assertEqual((r["alan"], r["alicilar"]), ("ekip", ["dilara"]))  # ekipten yöneticiye: ekip
         self.assertTrue(r["neden"].startswith("kural 2"))
         self.assertEqual(self.ok("alan", "--ekip", "--not-dosya", str(notu))["alan"], "ekip")
         self.worker.hatalar["kim"] = ("Köprü kurulumu bitmedi; Enes'e haber ver.", "ayar")
