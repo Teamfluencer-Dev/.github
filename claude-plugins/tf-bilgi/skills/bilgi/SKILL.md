@@ -1,6 +1,6 @@
 ---
 name: bilgi
-description: "TF Bilgi'den oku: okuma kuyruğun (senden beklenenler, sana yeni olanlar), son girdiler, bir konunun güncel durumu, arama, tek bir girdi, devir/karar için 'alındı' onayı, bildirim kanalı tercihin (Slack, mail, WhatsApp) ve bir belgenin yorum sayfası (yorum yaz, yorumları oku). GitHub hesabı olmayan köprü anahtarıyla okur (/bilgi kur <anahtar> ile bir kez kurulur). Gizli girdiler 🔒 gösterilir, özetlenmez, yorumlanmaz. Use when the user runs /bilgi, pastes a TF Bilgi köprü key (tfb1.…), or asks what is new in TF Bilgi, what is waiting for them, what TF Bilgi says about a topic, how TF Bilgi should notify them, or wants to comment on or read comments of a TF Bilgi entry."
+description: "TF Bilgi'den oku: okuma kuyruğun (senden beklenenler, sana yeni olanlar), son girdiler, bir konunun güncel durumu, arama, tek bir girdi, devir/karar için 'alındı' onayı, bildirim kanalı tercihin (Slack, mail, WhatsApp) ve bir belgenin yorum sayfası (yorum yaz, yorumları oku). Okuma GitHub okuma yetkisiyle; GitHub'ı olmayana belgeler Slack'ten bağlantıyla gelir (TF Bilgi botunun verdiği köprü anahtarı /bilgi kur ile kurulur ve /paylas içindir). Gizli girdiler 🔒 gösterilir, özetlenmez, yorumlanmaz. Use when the user runs /bilgi, pastes a TF Bilgi köprü key (tfb1.…), or asks what is new in TF Bilgi, what is waiting for them, what TF Bilgi says about a topic, how TF Bilgi should notify them, or wants to comment on or read comments of a TF Bilgi entry."
 argument-hint: "[son [gün] | kuyrugum | konu <ID> | ara <sorgu> | oku <girdi-id> | alindi <girdi-id> [--kisi <alıcı>] [not] | tercih [slack,mail,whatsapp] [kişi] | yorum <girdi-id> <yorum> | yorumlar <girdi-id> | kur <anahtar>] [--yonetim]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
@@ -26,16 +26,19 @@ a `tercih` comment (on the "Bildirim tercihleri" issue), a comment on an entry's
 discussion page (`yorum`) and the köprü key (`kur`).
 
 Two paths, chosen by the helper (`hazirla` → `yol`):
-- **köprü** (`yol: "kopru"`): the person has a köprü key (`~/.tf-bilgi/anahtar`, set up
-  once with `/bilgi kur`). Everything goes through the TF Bilgi bridge; no GitHub account
-  needed. Generated pages (kuyruk, SON, konu) come back as Markdown; gizli entries are
-  shown with their Drive link only to their recipients.
-- **doğrudan** (`yol: "dogrudan"`): no key; a local clone read with `gh` (read access).
+- **köprü** (`yol: "kopru"`): the person has a köprü key (`~/.tf-bilgi/anahtar`, written by
+  the Slack bot's one-line setup or `/bilgi kur`). The TF Bilgi bridge key (the Worker, or
+  its Apps Script relay) only shares: every read answers "Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla
+  gelir." (relay it as-is; documents reach people as Slack links). An older key goes
+  through the old bridge: generated pages (kuyruk, SON, konu) come back as Markdown; gizli
+  entries are shown with their Drive link only to their recipients.
+- **doğrudan** (`yol: "dogrudan"`): no key (or a bridge key and a logged-in `gh`); a local
+  clone read with `gh` (read access).
 
 Who can add documents (decision of 6 Nov 2026): only the people in the repo's `.kb.json`
 `yazanlar` and the librarian. Everyone else shares with `/paylas` through the köprü
-(ask the TF Bilgi owner for a key, then `/bilgi kur <anahtar>`). Until the key arrives
-the fallbacks stay: send the document to the TF Bilgi bot in Slack and acknowledge a
+(write `anahtar` to the TF Bilgi bot in Slack and paste the line it sends into the
+terminal, or `/bilgi kur <anahtar>`). The fallbacks stay: send the document to the TF Bilgi bot in Slack and acknowledge a
 handoff by writing `aldım <girdi-id>` to the bot, or share it with
 someone who can write to the repo and send them “alındı <girdi-id>”; they record it with
 `/bilgi alindi <girdi-id> --kisi <alıcı>`.
@@ -151,7 +154,8 @@ someone who can write to the repo and send them “alındı <girdi-id>”; they 
 
 ## Kur
 
-The köprü key is a secret: one line `tfb1.<…>.<…>` the TF Bilgi owner sends privately.
+The köprü key is a secret: one line `tfb1.<…>.<…>` the TF Bilgi bot in Slack sends privately
+(the user writes `anahtar` to the bot).
 **It never goes into a shell argument, never back into the chat, never into a file other
 than the one below.**
 
@@ -164,9 +168,9 @@ than the one below.**
    the Write tool.
 3. `TFB kur --dosya <dosya_yeri>`: the helper finds the key, checks it with the bridge,
    saves it (`~/.tf-bilgi/anahtar`, readable only by the user) and deletes the file in
-   every case. Reply with its `satir` and one line: "Artık /paylas ve /bilgi köprüden
-   çalışır; anahtarı kimseyle paylaşma." Exit 2 → relay as-is (wrong or revoked key: ask
-   the TF Bilgi owner for a new one).
+   every case. Reply with its `satir` and one line: "Anahtarı kimseyle paylaşma." Exit 2 →
+   relay as-is (wrong or revoked key: write `anahtar` to the TF Bilgi bot in Slack for a
+   new one).
 4. Removing the key: `TFB kur --sil`.
 
 ## Yorum
@@ -198,8 +202,7 @@ deposuna erişimi olanlar içindir." A comment never goes to the other area's re
    ```
    plus `notlar` as one line each. The `bildirim` line is shown as given; never promise
    more than it says (the notification Action in the KB repo sends only when it is
-   switched on, and while a pilot runs — Actions variable `BILDIRIM_YALNIZ` — only to
-   the pilot people; tf-bilgi `bildir.py yorum` may also not be live yet).
+   switched on; tf-bilgi `bildir.py yorum` may also not be live yet).
 4. AskUserQuestion: question "Yorum bu sayfaya yazılsın mı?" (doğrudan: "… senin GitHub
    hesabınla"; köprü: "… köprü adına, adınla"), header "Yorum",
    options **Gönder** / **Vazgeç**.

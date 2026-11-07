@@ -38,7 +38,7 @@ When the user hands over PRs (numbers like `api#1976`, PR links, "PR'larım",
    then the table, the `hatalar` line if any, "Nasıl doğrulanır" and "Bilinen tuzaklar".
 2. If the user gave other words, Write them to the note file as in SKILL.md step 4.
 3. Run the single `hizli` command of SKILL.md step 5 with `--ek '<that file>'` (and
-   `--not-dosya` when there is a note; same `--yonetim` / `--haber simdi` rules). The
+   `--not-dosya` when there is a note; the helper picks the area from the note). The
    helper deletes both files under `gecici/` after they are sent.
 4. Reply as in SKILL.md step 6: the `satir` line (plus one short line when `hatalar` was
    not empty).

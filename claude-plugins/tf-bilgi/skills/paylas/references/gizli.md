@@ -21,15 +21,20 @@ Turkish message: relay it as-is and stop. `TFB kb ...` passes kb.py through (0 o
 - **Only new files.** The repo is changed only through `TFB yaz` and `TFB kaydet`
   (doğrudan) or `TFB gonder` (köprü). Never Write/Edit in the cache clone or the köprü
   mirror, never run git yourself. `yazar` is the resolved person key, never `claude`.
-- **Area.** yönetim for these whole words: yönetim, yönetime, "yönetim için", yönetici,
-  yöneticiler, yöneticilere, C-level, `--yonetim` (not compounds such as "hesap
-  yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim paneli"); everything else is
-  ekip. On the köprü path there is no
-  yönetim: `hazirla --yonetim` refuses; relay it.
+- **Area: the helper decides, never you** (the same deterministic rule as `/paylas`, KB §3:
+  yönetim words, recipients named in the words, the sender). Write the user's own words verbatim
+  to `~/.tf-bilgi/gecici/not-<YYYYMMDD-HHMMSS>.txt` (absolute path) with the Write tool, then run
+  `TFB alan --not-dosya '<that path>'` (read-only; add `--yonetim` or `--ekip` only when the user
+  typed that flag). Use its `alan`; for `yonetim` put `--yonetim` right after the subcommand in
+  every later call. Exit 2 → relay the message as-is and stop (nothing is decided by guessing).
+  Gizli mode needs the repo path (doğrudan) or an old köprü key; the TF Bilgi bridge key from the
+  Slack bot (Worker or its Apps Script relay) does not take gizli shares: `hazirla` says so; relay
+  it (the Slack bot keeps its own gizli mode). On the köprü path there is no yönetim:
+  `hazirla --yonetim` refuses; relay it.
 - **Prepare.** `TFB hazirla --yazma [--yonetim]` (timeout 300000 ms). Exit 2 → relay the
   message as-is and stop. Keep `yol` (`kopru` or `dogrudan`), `kok` (on the köprü path the
   mirror the helper downloaded), `alan`, `kisi`, `uzak`, `bugun`, `takvim`, `gecici`,
-  `damga`, `sessiz`, `sessiz_neden`, `saat`, `geri_al`; relay each `notlar` entry as one
+  `damga`, `geri_al`; relay each `notlar` entry as one
   short line. `D` = `<gecici>/paylas-<damga>`; every scratch file of this run goes there
   (Write creates the folder).
 - **Recipients** come from the user's words only: names mapped to `kisiler.json` keys by
@@ -37,20 +42,14 @@ Turkish message: relay it as-is and stop. `TFB kb ...` passes kb.py through (0 o
   left out and the receipt says "<ad> kisiler.json'da yok; alıcı yapılmadı"; never invent
   a key. The author is a recipient only if the user says so. Yönetim area: drop
   recipients without `yonetim` in `alanlar` (say so).
-- **haber.** Köprü: always `"haber": "hemen"`. Doğrudan, `sessiz: false` → `haber: hemen`.
-  Doğrudan, `sessiz: true` (weekend or 19:00–08:30 Istanbul) → ask once with
-  AskUserQuestion: question "Mesai dışı (<sessiz_neden>, <saat>). <alıcı adları> için
-  haber ne zaman gitsin?", header "Haber", options **Şimdi gönder** ("Sessiz saati
-  beklemeden şimdi bildirim gider") → `haber: simdi`; **Mesai başında gönder (08:30)**
-  ("Kayıt şimdi girer, bildirim ilk iş günü 08:30 özetinde") → `haber: hemen`.
-- **Receipt** (doğrudan) — one line: `Kaydedildi: <id> → <konu> · <alıcı adları> (haber:
-  hemen | şimdi | 08:30 özetinde) · <url> · <geri alma>`. `<geri alma>`: only when
+- **haber.** Always `"haber": "hemen"` (7/24: no quiet hours, no question about when).
+- **Receipt** (doğrudan) — one line: `Kaydedildi: <id> → <konu> · <alıcı adları> · <url> ·
+  <geri alma>`. `<geri alma>`: only when
   `hazirla` said `geri_al: true` (a köprü key is installed): `geri almak için: /paylas
   geri-al <id>`; otherwise `geri almak için köprü anahtarı gerekir (/bilgi kur)`. For the
   recipients part run `TFB bildirim-plani --tip <TIP> --kimden <k1,k2> --yazar <kisi>
-  [--son-tarih <D>] [--haber hemen|simdi]` (read-only) and use its `satir`; never promise
-  more than it says (the notification Action sends only when it is switched on, and while
-  a pilot runs — Actions variable `BILDIRIM_YALNIZ` — only to the pilot people).
+  [--son-tarih <D>]` (read-only) and use its `satir`; never promise more than it says
+  (the notification Action sends only when it is switched on).
 
 ## Gizli mode (confidential: content never enters git)
 
@@ -149,8 +148,7 @@ G6. **Draft.** Doğrudan: `TFB kb taslak --tur <tur> --kisi <kisi> --kanal claud
       only when the user gives a deadline (resolve weekdays from `takvim`).
     - Keep the printed entry as is, except: `konu` → a topic id only if the user named
       one (else stays `GIZLI`; never `ONERI:`/`AYIKLA`, never matched from content);
-      `haber` line after the `istek` block as in "Before you start" (`hemen`, or `simdi` after the
-      out-of-hours question); `birim`/`proje`/`baglantilar` only from ids or words the
+      `haber: hemen` line after the `istek` block; `birim`/`proje`/`baglantilar` only from ids or words the
       user gave; `gecersiz_kildigi: [<id>]` only when the user says this corrects their
       own earlier gizli entry. Keep the printed layout exactly (same order, same quoting,
       no comments, no extra lines): `kb dogrula` compares the whole frontmatter with the
@@ -173,7 +171,7 @@ G8. **Card** (fenced as text), then ask once — this confirmation stays in gizl
       başlık : "<baslik | Gizli belge>"
       konu   : GIZLI (konusuz gizli belge) | <K-… başlık> (kullanıcı söyledi)
       tür    : <tur> · kitle: <alıcılar> · alan: <alan>
-      istek  : <TIP> → <kişi1, kişi2> · son tarih <YYYY-MM-DD | yok> · haber: <hemen | şimdi>
+      istek  : <TIP> → <kişi1, kişi2> · son tarih <YYYY-MM-DD | yok> · haber: hemen
       bildirim: <satir from bildirim-plani | köprü: kütüphaneci dosyalayınca>
       gizli  : evet · içerik depoya girmez · link: <gizli_link>
       paylaşım: konum Drive'ım · kişiler yalnız <e-postalar> (Görüntüleyici) · genel erişim Kısıtlı — <kullanıcı onayladı | connector doğruladı>
