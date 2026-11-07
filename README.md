@@ -188,7 +188,7 @@ ayrı yapılır.
 
 ```
 /paylas ./abonelik.pdf yönetim için; Cuma'ya kadar fiyat kararı lazım
-/paylas Ayşe'ye                  # yol yoksa bu konuşmada son üretilen dosya
+/paylas Ayşe'ye                  # yol yoksa konuşmanın ürettiği son belge (html, pdf, md…; kod/ayar asla)
 /paylas bu özeti Mert'e paylaş   # konuşmadaki metin dosyaya yazılıp paylaşılır
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /paylas api#1976 web#689 merge sırası devri   # PR tablosu gh ile kurulur, dosya olarak gider
