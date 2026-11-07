@@ -1,6 +1,6 @@
 ---
 name: toplu-paylas
-description: "TF Bilgi'ye toplu paylaş: bir klasör dolusu belge (ör. claude.ai'den indirilmiş artifact'ler: HTML sayfaları, PDF ekleri) ya da birden çok dosya. Her öğeyi ekip, yönetim ya da girmez diye sınıflar, sır taraması yapar (kişisel veri engellenmez, etiketlenir), tek onay tablosu gösterir; onaylanınca her alana tek commit atar ya da köprü anahtarıyla her ekip öğesini köprüden gönderir. Use when the user runs /toplu-paylas or asks to share a whole folder or many files into TF Bilgi at once."
+description: "TF Bilgi'ye toplu paylaş: bir klasör dolusu belge (ör. claude.ai'den indirilmiş artifact'ler: HTML sayfaları, PDF ekleri) ya da birden çok dosya. Her öğeyi ekip, yönetim ya da girmez diye sınıflar (sır ve kişisel veri paylaşımı engellemez; kişisel veri etiketlenir), tek onay tablosu gösterir; onaylanınca her alana tek commit atar ya da köprü anahtarıyla her ekip öğesini köprüden gönderir. Use when the user runs /toplu-paylas or asks to share a whole folder or many files into TF Bilgi at once."
 argument-hint: "<klasör|dosyalar> [kime: kişi1, kişi2] [hemen haber ver] [--yonetim-yok]"
 allowed-tools:
   - Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py" *)
@@ -20,7 +20,8 @@ the köprü path, one köprü share per ekip item). The approval table stays: bu
 is the one exception to "`/paylas` asks nothing". The
 KB repo's `araclar/kb.py` owns every rule (discovery, text, scanning, matching,
 ids, validation, commit/push); this skill orchestrates it through the plugin helper.
-The single-item rules of `/paylas` still hold; this file says where bulk differs.
+Type and body rules: `${CLAUDE_PLUGIN_ROOT}/skills/paylas/references/turler.md` (through
+siniflama.md).
 
 **`TFB`** below stands for `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tf_bilgi.py"`.
 Always type the full form. For the yönetim area put `--yonetim` right after the
@@ -56,10 +57,15 @@ before step 4 (subagents read it too).
   An attachment (`ust` set) of a yönetim item is yönetim. If the yönetim repo is
   unreachable, not allowed for this person, or `--yonetim-yok` is given, yönetim
   items stay in staging and the reply says so.
-- **Raw file only if all hold:** manifest `tara.cikis` is not 5 and `tara.kategoriler`
-  has no `sir`, `buyuk` is false, no open security specifics (see siniflama.md). Assets
-  (images, data) are never taken. A secret is never shared: an item whose file has one
-  gets no raw file and its body never contains it.
+- **Secrets never block** (7 Kas: private repo, internal use). No item is refused or held
+  back for a password, key, token or connection string in it. Only the TF Bilgi köprü key
+  (`tfb1.…`) and files under `~/.tf-bilgi` are never shared (the helper refuses them).
+- **Raw file only if both hold:** manifest `tara.cikis` is not 5 and `tara.kategoriler` has
+  no `sir`, and `buyuk` is false (see siniflama.md). The `sir` condition is only there
+  because the repo's pinned `kb.py dogrula` still rejects a secret inside `ham/`: such an
+  item is shared all the same, as an entry without its raw file. Assets (images, data) are
+  never taken. Your own `govde.md` never repeats a secret's value (it would fail
+  `kb dogrula` too).
 - **Personal data never blocks and is never masked** (phone, e-mail, TCKN, IBAN,
   influencer identity): the item gets `kisisel_veri: true` in `oge.json` and
   `kisisel_veri: var` in its entry (right after `ham_notu`); its raw file is taken if the
@@ -79,7 +85,7 @@ before step 4 (subagents read it too).
 1. **Paths and batch recipients.** Collect the paths from `$ARGUMENTS`; make each
    absolute (expand `~`). None given → ask once which folder or files to share. The
    rest of the text may name batch recipients and ask for `haber: hemen`; resolve the
-   names to `kisiler.json` keys after step 2 (as `/paylas` step 3 does) and keep them
+   names to `kisiler.json` keys after step 2 (by `ad`, the closest one; never invent a key) and keep them
    as `alicilar` (ordered, no duplicates) and `haber`. "Hemen haber ver" with nobody
    named → ask once whom to notify.
 
@@ -224,7 +230,7 @@ before step 4 (subagents read it too).
    5. After the area's last item: `TFB kb [--yonetim] dogrula <every tam_yol> --json`.
       Errors → fix `girdi.md` (only what does not change the table), `TFB yaz
       [--yonetim] --uzerine --dosya …`, validate again — at most 2 rounds. Still failing
-      → tell the user which files wait in the cache and stop (as `/paylas` step 10.3).
+      → tell the user which files wait in the cache (and that `<D>` is kept) and stop.
    6. `TFB kaydet [--yonetim] --mesaj 'toplu-paylas: <n> girdi (<kisi>)' <every girdi yol> <every new ham yol> [ham/DEFTER.tsv when any ham-ekle returned "yeni"]`.
 
    6K. **Köprü path** (ekip items only, in `no` order). For each item Write
