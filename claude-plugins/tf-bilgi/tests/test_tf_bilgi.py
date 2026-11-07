@@ -148,8 +148,6 @@ if args[:1] == ["api"]:  # REST: push yetkisi, issue/yorum/etiket (FAKE_GH_ISSUE
             sys.exit(1)
         cik("FAKE_GH_REPO_CIKIS")
         push = os.environ.get("FAKE_GH_PUSH", "true")
-        if parca[2] == "tf-bilgi-gelen":  # gelen kutusu deposu (0.8.0): ayrı yetki
-            push = os.environ.get("FAKE_GH_PUSH_GELEN", push)
         print(push)
         sys.exit(0)
     if parca[3] == "labels":
@@ -281,7 +279,7 @@ class Base(unittest.TestCase):
         self.issues.write_text(json.dumps({"issues": [], "comments": {}, "labels": [], "next": 20}))
         os.environ["FAKE_GH_ISSUES"] = str(self.issues)
         for name in ("TF_BILGI_KISI", "STUB_KB_CIKIS", "STUB_KB_PUSH_YOK", "GIT_DIR", "GIT_WORK_TREE", "FAKE_GH_PUSH",
-                     "FAKE_GH_PUSH_GELEN", "TF_BILGI_GELEN_DEPOSU", "FAKE_GH_404_DEPOLAR",
+                     "FAKE_GH_404_DEPOLAR",
                      "FAKE_GH_REPO_CIKIS", "FAKE_GH_YORUM_CIKIS", "TF_BILGI_SIMDI", "FAKE_GH_ARAMA_CIKIS",
                      "FAKE_GH_LISTE_CIKIS", "FAKE_GH_YAZ_CIKIS", "FAKE_GH_ETIKET_CIKIS", "FAKE_GH_ARAMA_EKSIK",
                      "FAKE_GH_YORUM_YAZ_CIKIS", "FAKE_GH_SAYFA_OKU_CIKIS", "TF_BILGI_YOL", "TF_BILGI_KOPRU_URL",
@@ -517,12 +515,13 @@ class KbSurumTest(Base):
         self.assertEqual(len(set(GERCEK_KB_SHA256)), len(GERCEK_KB_SHA256))
 
     def test_gecis_iki_surumu_de_kabul_eder(self):
-        """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): 0.4.0'ın kb.py'si (tf-bilgi#2), köprü kb.py'si
-        (tf-bilgi#5 head d24c0a4) ve 0.7.0'ın hızlı yol + raflar kb.py'si (tf-bilgi#6 head e59a23b, #7'yi içerir; KB PR'ı
-        merge edilene kadar eskiler de geçer)."""
-        self.assertEqual(GERCEK_KB_SHA256, ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",
-                                            "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f",
-                                            "c9fd7f6a98eabadd35bb17b055b8b887b80fb160c347c10d8a736359f418e30e"))
+        """Geçişte eski ve yeni kb.py birlikte sabitlenir (KB §12): main'deki 0.7.0 kb.py'si (tf-bilgi#6 head e59a23b)
+        ve 0.9.0'ın bitiş tasarımı kb.py'si (KB PR'ı merge edilene kadar eski de geçer). 0.4.0 ve 0.6.0 çıktı."""
+        self.assertEqual(GERCEK_KB_SHA256, ("c9fd7f6a98eabadd35bb17b055b8b887b80fb160c347c10d8a736359f418e30e",
+                                            "fcbd94e25e361d4b4777337b2d30832c8aad5e9059cba34dbccbb5a908006b71"))
+        for cikan in ("e6b4e22430ee55666e55e620969f8df67bd37d17991fdeac8660bec964eddaa6",   # 0.4.0
+                      "74ae1f87de1bf3d2422e4b91444d356381d495beb0a51a1cb75e20564ef6852f"):  # 0.6.0
+            self.assertNotIn(cikan, GERCEK_KB_SHA256)
         self.assertNotIn("76677edd9f348d1dea7827f3449cf8fb6b8767705b896264129260329a27da23", GERCEK_KB_SHA256)  # 0.3.1
         self.assertNotIn("107e6ad85b374af69b69fc67e27380bd11d33a1afc7c0112188661feb4e07785", GERCEK_KB_SHA256)  # yayınlanmadı
         eski_stub = STUB_KB + "# eski\n"
@@ -1201,8 +1200,8 @@ class YetkiTest(Base):
         self.assertIs(self.ok("hazirla")["yazabilir"], False)  # okuma yolu durmaz
         out = self.stop("hazirla", "--yazma")
         self.assertTrue(out.startswith("Senin paylaşımın TF Bilgi köprüsünden gider (depoya köprüyle kütüphaneci "
-                                       "yazar). TF Bilgi sorumlusundan köprü anahtarı iste, sonra `/bilgi kur "
-                                       "<anahtar>` yaz"), out)
+                                       "yazar). Slack'te TF Bilgi botuna `anahtar` yaz ve gelen satırı terminale "
+                                       "yapıştır"), out)
         for parca in ("GitHub hesabının (mert-gh) Teamfluencer-Dev/tf-bilgi deposunda yazma yetkisi yok (depoya yalnız "
                       "`.kb.json` `yazanlar` listesindekiler yazar)", "/bilgi kuyrugum", "/bilgi yorum",
                       "Slack'teki TF Bilgi botuna gönder", "'aldım <kod>'",
@@ -1217,7 +1216,7 @@ class YetkiTest(Base):
         (self.kok() / onay).parent.mkdir(parents=True)
         (self.kok() / onay).write_text("---\ngirdi: B-20261029-ayse-01\nkisi: mert\ntarih: 2026-11-05\n---\n")
         before = git(self.bare["ekip"], "rev-parse", "main")
-        self.assertIn("köprü anahtarı iste", self.stop("kaydet", "--mesaj", "alindi", onay))
+        self.assertIn("TF Bilgi botuna `anahtar` yaz", self.stop("kaydet", "--mesaj", "alindi", onay))
         self.assertEqual(git(self.bare["ekip"], "rev-parse", "main"), before)
 
     def test_yazan_yetkisizin_alindisini_kaydeder(self):
@@ -1251,7 +1250,7 @@ class YetkiTest(Base):
                                                          "uzak": "Teamfluencer-Dev/tf-bilgi"}))
         os.environ["FAKE_GH_PUSH"] = "false"
         out = self.stop("hazirla", "--yazma")
-        self.assertIn("köprü anahtarı iste", out)
+        self.assertIn("Slack'te TF Bilgi botuna `anahtar` yaz", out)
         self.assertIn("deposunda yazma yetkisi yok. Okuma ve yorum çalışmaya devam eder", out)
         self.assertNotIn("yazanlar", out)
 
@@ -1347,31 +1346,27 @@ class BildirimPlaniTest(Base):
     def test_hemen_simdi_ve_kanalsiz_kisi(self):
         r = self.plan("--tip", "BILGI", "--kimden", "ali,mert,zeynep,can,ayse", "--haber", "hemen")
         self.assertTrue(r["anlik"])
-        self.assertEqual(r["satir"], "şimdi anlık: Ali (Slack), Mert (Slack/mail) · Can'a bildirim gitmez (ekip "
+        self.assertEqual(r["satir"], "dosyalanınca hemen: Ali (Slack), Mert (Slack/mail) · Can'a bildirim gitmez (ekip "
                                      "alanının üyesi değil) · sen (gönderen) bildirim almazsın · Zeynep: kayıtlı kanal "
                                      "yok (Slack kimliği ve e-posta), gönderimde dizinde bulunamazsa hiçbir şey gitmez")
         self.assertEqual([a["durum"] for a in r["alicilar"]], ["simdi", "simdi", "kanal-yok", "alan-disi", "gonderen"])
 
-    def test_sessiz_saat_ve_ozet_zamani(self):
-        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", an="2026-11-05T19:30:00+03:00")
-        self.assertEqual(r["satir"], "sessiz saat (Per 19:30): Ali (Slack) yarın 08:30 özetinde")
-        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", an="2026-11-06T20:00:00+03:00")
-        self.assertIn("Pzt 08:30 özetinde", r["satir"])
-        r = self.plan("--tip", "BILGI", "--kimden", "ali", an="2026-11-05T07:00:00+03:00")
-        self.assertEqual((r["anlik"], r["satir"]), (False, "Ali (Slack) bugün 08:30 özetinde"))
-
-    def test_acil_karar_haber_olmadan_da_anlik_ve_sinir(self):
-        r = self.plan("--tip", "KARAR", "--kimden", "ali", "--son-tarih", "2026-11-06")
-        self.assertTrue(r["anlik"])
+    def test_yedi_yirmi_dort_sessiz_saat_ozet_ve_sinir_yok(self):
+        """0.9.0 (bitiş tasarımı §7): sessiz saat, günlük özet ve günlük anlık sınırı yok; --haber/--adet eski çağrılar
+        bozulmasın diye kabul edilir, sonucu değiştirmez."""
+        for an in ("2026-11-05T19:30:00+03:00", "2026-11-07T03:00:00+03:00", "2026-11-05T10:00:00+03:00"):
+            for ek in ((), ("--haber", "gunluk"), ("--haber", "simdi", "--adet", "9")):
+                r = self.plan("--tip", "BILGI", "--kimden", "ali", *ek, an=an)
+                self.assertEqual((r["anlik"], r["satir"]), (True, "dosyalanınca hemen: Ali (Slack)"), (an, ek))
+                self.assertEqual(set(r), {"anlik", "alicilar", "satir", "notlar"})
         r = self.plan("--tip", "KARAR", "--kimden", "ali", "--son-tarih", "2026-11-20")
-        self.assertFalse(r["anlik"])
-        r = self.plan("--tip", "BILGI", "--kimden", "ali", "--haber", "hemen", "--adet", "5")
-        self.assertIn("kişi başı günde en çok 3 anlık; kalan 2 girdi yarın 08:30 özetinde", r["satir"])
+        self.assertEqual(r["alicilar"][0]["durum"], "simdi")
+        self.assertIn("kimse", self.stop("bildirim-plani", "--tip", "BILGI", "--kimden", "kimse", "--yazar", "ayse"))
 
     def test_tercih_issueden_okunur(self):
         self.yorum(yorum("ayse-gh", "tercih: kisi=mert kanal=whatsapp"))
         r = self.plan("--tip", "BILGI", "--kimden", "mert", "--haber", "hemen")
-        self.assertEqual(r["satir"], "şimdi anlık: Mert (mail) · WhatsApp henüz kapalı → mail")
+        self.assertEqual(r["satir"], "dosyalanınca hemen: Mert (mail) · WhatsApp henüz kapalı → mail")
         self.assertEqual(r["alicilar"][0]["tercih"], "issue")
         os.environ["FAKE_GH_YORUM_CIKIS"] = "1"
         r = self.plan("--tip", "BILGI", "--kimden", "mert", "--haber", "hemen")
@@ -1501,18 +1496,15 @@ class YorumTest(Base):
         self.assertIn("etiketsiz (depoya yazma yetkin yok", r["yeni_sayfa"]["etiket"])
         self.assertEqual(r["ben"], {"login": "mert-gh", "kisi": "mert", "ben": "mert"})
         self.assertEqual([(a["kisi"], a["neden"]) for a in r["alicilar"]], [("ayse", "yazar"), ("zeynep", "alıcı")])
-        self.assertEqual(r["bildirim"], "şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre; kişi başı günde "
-                                        "en çok 5 yorum bildirimi, fazlası ertesi iş günü 08:30 günlük mesajında) · "
-                                        "bildirim yalnız KB deposunda bildirimler açıkken gider (pilotta yalnız pilot "
-                                        "kişilere)")
+        self.assertEqual(r["bildirim"], "şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre) · bildirim KB "
+                                        "deposundaki bildirim iş akışı açıkken gider")
         self.assertEqual(r["karakter"], len("Bence 14.990 doğru.\nAma yıllıkta indirim şart."))
         self.assertEqual(self.api_cagrilari("POST"), [])  # plan hiçbir şey yazmaz
         arama = [c for c in self.api_cagrilari() if "search/issues" in c][0]
         self.assertIn('q=repo:Teamfluencer-Dev/tf-bilgi is:issue in:title "[B-20261105-ayse-01]"', arama)
-        os.environ["TF_BILGI_SIMDI"] = "2026-11-05T20:00:00+03:00"
+        os.environ["TF_BILGI_SIMDI"] = "2026-11-07T23:00:00+03:00"  # Cumartesi gecesi: 7/24, sessiz saat yok
         r = self.ok("yorum", YORUM_GIRDI, "--dosya", self.dosya)
-        self.assertTrue(r["bildirim"].startswith("sessiz saat (Per 20:00): Ayşe (yazar), Zeynep (alıcı) yarın 08:30 "
-                                                 "günlük mesajında (Yeni yorumlar) · bildirim yalnız KB deposunda"),
+        self.assertTrue(r["bildirim"].startswith("şimdi: Ayşe (yazar), Zeynep (alıcı) (kanal tercihine göre)"),
                         r["bildirim"])
 
     def test_gonder_sayfayi_acar_sonra_ayni_sayfaya_yazar(self):
@@ -2029,7 +2021,7 @@ class KopruTest(Base):
         ayna = self.cache / "kopru"
         self.assertEqual((r["yol"], r["kok"], r["kisi"], r["alan"], r["kisi_kaynagi"]),
                          ("kopru", str(ayna), "mert", "ekip", "kopru"))
-        self.assertEqual((r["sessiz"], r["sessiz_neden"]), (True, "hafta sonu"))
+        self.assertFalse({"sessiz", "sessiz_neden", "saat", "ozet_zamani"} & set(r))  # 7/24: mesai bilgisi yok
         self.assertEqual(r["kopru"]["sinirlar"]["parca_bayt"], 5)
         for rel in (".kb.json", "kisiler.json", "KONULAR.md", "araclar/kb.py", "sablonlar/analiz.md", ".kopru.json"):
             self.assertTrue((ayna / rel).is_file(), rel)
@@ -2041,7 +2033,7 @@ class KopruTest(Base):
         os.environ["TF_BILGI_KISI"] = "ayse"
         self.assertIn("köprü anahtarın 'mert' kişisine ait", self.stop("hazirla"))
         del os.environ["TF_BILGI_KISI"]
-        self.assertIn("yalnız ekip alanında", self.stop("hazirla", "--yonetim"))
+        self.assertIn("Yönetim belgeleri köprüden okunmaz", self.stop("hazirla", "--yonetim"))
 
     def test_hazirla_onaysiz_kb_py_calistirmaz(self):
         self.kopru.dosyalar["araclar/kb.py"] = STUB_KB + "# değişti\n"
@@ -2056,7 +2048,7 @@ class KopruTest(Base):
         self.assertEqual(json.loads(out)["kok"], str(self.cache / "kopru"))
         for argv in (("kb", "son", "--json"), ("kb", "alindi", "B-1", "--kisi", "mert"), ("kb", "kaydet", "--mesaj", "x")):
             self.assertEqual(self.cli(*argv)[0], 2, argv)
-        self.assertIn("yalnız ekip alanında", self.stop("kb", "--yonetim", "tara", "/x"))
+        self.assertIn("Yönetim belgeleri köprüden okunmaz", self.stop("kb", "--yonetim", "tara", "/x"))
 
     def test_gonder_parcali_yukler_ve_tek_satir_makbuz(self):
         self.hazir()
@@ -2326,15 +2318,10 @@ class KopruTest(Base):
         adlar = list(self.kopru.kayitlar[r["kod"]]["veri"])
         self.assertEqual(adlar, ["taslak.md", "Calisma.md", "Calisma-2.md", "meta-2.json"])  # çakışma ve ayrılmış ad
 
-    def test_mesai_sinirlari(self):
-        for an, sessiz in (("2026-11-05T08:29:00+03:00", True), ("2026-11-05T08:30:00+03:00", False),
-                           ("2026-11-05T18:59:00+03:00", False), ("2026-11-05T19:00:00+03:00", True),
-                           ("2026-11-06T19:00:00+03:00", True), ("2026-11-09T08:30:00+03:00", False),
-                           ("2026-11-08T12:00:00+03:00", True)):
-            os.environ["TF_BILGI_SIMDI"] = an
-            self.assertEqual(tf_bilgi.mesai_durumu()["sessiz"], sessiz, an)
-        os.environ["TF_BILGI_SIMDI"] = "2026-11-06T19:00:00+03:00"  # Cuma 19:00
-        self.assertEqual(tf_bilgi.mesai_durumu()["ozet_zamani"], "Pzt 08:30")
+    def test_mesai_yok(self):
+        """0.9.0: 7/24; mesai ve sessiz saat yardımcıları kalktı."""
+        for ad in ("mesai_durumu", "sessiz_mi", "ozet_zamani", "sonraki_tur", "SESSIZ_BAS", "TUR_SAATLERI"):
+            self.assertFalse(hasattr(tf_bilgi, ad), ad)
 
 
 class KopruAnahtarYenilemeTest(KopruTest):
@@ -2452,7 +2439,7 @@ class KopruDogrudanYolTest(Base):
                            "TF_BILGI_SIMDI": "2026-11-05T10:00:00+03:00"})
         self.seed_commit("ekip", "girdiler/2026/11/B-20261105-ayse-01.md", YORUM_GIRDI_METNI)
         hazir = self.ok("hazirla")
-        self.assertEqual((hazir["yol"], hazir["sessiz"]), ("dogrudan", False))
+        self.assertEqual(hazir["yol"], "dogrudan")
         durum = json.loads(self.issues.read_text())
         durum["issues"].append(gh_issue(10, "[B-20261105-ayse-01] Abonelik planı v2", acan="kopru-bot"))
         durum["comments"]["10"] = [gh_yorum(1, "kopru-bot", "kisi=ayse · Ayşe (TF Bilgi köprüsü)\n\nKöprüden yazdım.",
@@ -2490,16 +2477,15 @@ class KopruDogrudanYolTest(Base):
             self.assertEqual(self.ok("geri-al", "B-20261105-ayse-01")["sonuc"], "kaydedildi")
         self.assertEqual(kopru.islemler("geri-al")[0]["hedef"], "B-20261105-ayse-01")  # geri-al köprüye gider
 
-    def test_bildirim_plani_simdi_sessiz_saati_deler(self):
+    def test_bildirim_plani_gece_de_hemen(self):
         os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
         self.ok("hazirla")
         os.environ["TF_BILGI_SIMDI"] = "2026-11-05T22:00:00+03:00"
-        r = self.ok("bildirim-plani", "--tip", "BILGI", "--kimden", "mert", "--yazar", "ayse", "--haber", "simdi")
-        self.assertTrue(r["anlik"])
-        self.assertTrue(r["satir"].startswith("şimdi anlık: Mert"), r["satir"])
-        r = self.ok("bildirim-plani", "--tip", "BILGI", "--kimden", "mert", "--yazar", "ayse", "--haber", "hemen")
-        self.assertTrue(r["satir"].startswith("sessiz saat (Per 22:00): Mert"), r["satir"])
-        self.assertEqual(self.ok("hazirla")["sessiz_neden"], "mesai dışı (19:00–08:30)")
+        for haber in ("simdi", "hemen"):
+            r = self.ok("bildirim-plani", "--tip", "BILGI", "--kimden", "mert", "--yazar", "ayse", "--haber", haber)
+            self.assertTrue(r["anlik"])
+            self.assertTrue(r["satir"].startswith("dosyalanınca hemen: Mert"), r["satir"])
+        self.assertNotIn("sessiz_neden", self.ok("hazirla"))
 
 
 class CliTest(Base):
@@ -2560,6 +2546,7 @@ class SahteGitHub:
 
     def __init__(self, depolar):
         self.depolar, self.cagrilar, self.yaris, self.hatalar, self.klasorler = {}, [], {}, {}, {}
+        self.etiketler = {}  # (slug, issue no) → etiketler (zil)
         for slug, dosyalar in depolar.items():
             self.depo_kur(slug, dosyalar)
 
@@ -2714,6 +2701,16 @@ class SahteGitHub:
                 raise tf_bilgi.GhHatasi("gh: Update is not a fast forward (HTTP 422)", 422)
             d["ref"] = govde["sha"]
             return {"ref": "refs/heads/main", "object": {"sha": govde["sha"]}}
+        if r[:1] == ["issues"] and len(r) in (3, 4) and r[2] == "labels":  # zil: etiket kaldır / ekle
+            etiketler = self.etiketler.setdefault((slug, int(r[1])), set())
+            if yontem == "DELETE" and len(r) == 4:
+                if r[3] not in etiketler:
+                    raise tf_bilgi.GhHatasi("gh: Label does not exist (HTTP 404)", 404)
+                etiketler.discard(r[3])
+                return [{"name": e} for e in sorted(etiketler)]
+            if yontem == "POST" and len(r) == 3:
+                etiketler.update(govde["labels"])
+                return [{"name": e} for e in sorted(etiketler)]
         raise AssertionError(f"beklenmeyen GitHub çağrısı: {yontem} {yol}")
 
 
@@ -2770,6 +2767,9 @@ class HizliTest(Base):
     def yetki_cagrilari(self, slug):
         return [c for c in self.gh_calls() if c[:2] == ["api", f"repos/{slug}"]]
 
+    def zil_cagrilari(self):
+        return [(c[0], c[1]) for c in self.gh.cagrilar if "/labels" in c[1]]
+
     def test_yazan_tek_commit_klonsuz_kb_pysiz_makbuz(self):
         pdf = self.ek("Çalışma Notu.pdf", b"%PDF-1.4 \x00\x01\xff ikili")
         md = self.ek("rapor.md", "Bağlantı: mongodb://u:hunter2@db GIZLI-ANAHTAR-123 KISISEL-VERI")  # sır engellemez
@@ -2780,8 +2780,12 @@ class HizliTest(Base):
         self.assertRegex(kod, r"^G-[a-z0-9]{6}$")
         self.assertEqual((r["alan"], r["yol"], r["dosyalar"], r["notlar"]),
                          ("ekip", "writer", ["govde.md", "Calisma-Notu.pdf", "rapor.md"], []))
-        self.assertEqual(r["satir"], f"Gönderildi ✓ {kod} · Çalışma Notu.pdf, rapor.md + not · ekip · kütüphaneci bugün 13:05 turunda "
-                                     f"dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al {kod}")
+        self.assertEqual(r["satir"], f"Gönderildi ✓ {kod} · Çalışma Notu.pdf, rapor.md + not · ekip · kütüphaneci birkaç "
+                                     f"dakika içinde dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al {kod}")
+        self.assertEqual(r["alicilar"], ["mert"])  # §3: gönderen (ayse) alıcı sayılmaz; Mert ekipte → ekip
+        self.assertEqual(self.zil_cagrilari(), [("DELETE", f"repos/{self.EKIP}/issues/9/labels/zil"),
+                                                ("POST", f"repos/{self.EKIP}/issues/9/labels")])
+        self.assertEqual(self.gh.etiketler[(self.EKIP, 9)], {"zil"})
         kayit = self.kayit(self.EKIP, kod)
         self.assertEqual(sorted(kayit), ["Calisma-Notu.pdf", "govde.md", "meta.json", "rapor.md"])
         klasor = f"00-gelen/20261105-123000-ayse-{kod[2:]}"
@@ -2881,7 +2885,7 @@ class HizliTest(Base):
         self.assertIn(" · Çalışma Notu.pdf, Şeker Ölçüm.xlsx, meta.json +6 dosya + not · ", unicodedata.normalize("NFC", r["satir"]))
 
     def test_boyut_sinirlari_agdan_once(self):
-        with mock.patch.object(tf_bilgi, "HIZLI_DOSYA_AZAMI", 10), mock.patch.object(tf_bilgi, "HIZLI_KAYIT_AZAMI", 15):
+        with mock.patch.object(tf_bilgi, "YUKLEME_DOSYA_AZAMI", 10), mock.patch.object(tf_bilgi, "YUKLEME_KAYIT_AZAMI", 15):
             self.assertIn("buyuk.bin çok büyük", self.stop("hizli", "--ek", self.ek("buyuk.bin", b"x" * 11)))
             a, b = self.ek("a.md", "x" * 8), self.ek("b.md", "y" * 8)
             self.assertIn("toplamı çok büyük", self.stop("hizli", "--ek", a, "--ek", b))
@@ -2890,6 +2894,10 @@ class HizliTest(Base):
         self.assertEqual(self.gh.cagrilar, [])
         self.assertEqual(self.yetki_cagrilari(self.EKIP), [])
         self.assertEqual((tf_bilgi.HIZLI_DOSYA_AZAMI, tf_bilgi.HIZLI_KAYIT_AZAMI), (50 * 1048576, 100 * 1048576))
+        self.assertEqual((tf_bilgi.YUKLEME_DOSYA_AZAMI, tf_bilgi.YUKLEME_KAYIT_AZAMI), (90 * 1048576, 900 * 1048576))
+        with mock.patch.object(tf_bilgi, "HIZLI_DOSYA_AZAMI", 10):  # yazan yolu (GitHub blob): yazmadan önce durur
+            self.assertIn("buyuk.bin çok büyük", self.stop("hizli", "--ek", self.ek("buyuk.bin", b"x" * 11)))
+        self.assertFalse([c for c in self.gh.cagrilar if c[0] in ("POST", "PATCH")])
         self.assertIn("Paylaşılacak bir şey yok", self.stop("hizli", stdin=" \n\n"))
         self.assertIn("Ek bulunamadı", self.stop("hizli", "--ek", str(self.ekler / "yok.pdf")))
         self.assertIn("mutlak yol", self.stop("hizli", "--ek", "goreli.pdf"))
@@ -2920,7 +2928,7 @@ class HizliTest(Base):
             self.assertEqual((r["kod"], r["yol"], r["alan"], r["dosyalar"]),
                              ("G-abc000", "kopru", "ekip", ["govde.md", "Calisma.md"]))
             self.assertEqual(r["satir"], "Gönderildi ✓ G-abc000 · Çalışma.md + not · ekip · kütüphaneci yarın 09:05 turunda "
-                                         "dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al G-abc000")
+                                         "dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al G-abc000")
             islemler = [c["islem"] for c in kopru.cagrilar]
             self.assertEqual((islemler[0], islemler[-1], set(islemler)), ("baslat", "bitir", {"baslat", "parca", "bitir"}))
             self.assertEqual(kopru.islemler("baslat")[0]["taslak"], HIZLI_TASLAK)  # sözleşme: aynen bu taslak
@@ -2945,7 +2953,8 @@ class HizliTest(Base):
             self.assertEqual(len(kopru.islemler("baslat")), 3)
             self.assertEqual(r["dosyalar"], ["x.pdf"])
             self.assertIn(" · x.pdf · ekip · ", r["satir"])
-            self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", self.stop("hizli", "--yonetim", stdin="yönetim için"))
+            self.assertIn("Bu köprü anahtarı eski: yönetime gönderemez", self.stop("hizli", "--yonetim",
+                                                                                     stdin="yönetim için"))
             with mock.patch.dict(tf_bilgi.KOPRU_SINIRLAR, {"dosya_azami_bayt": 4}):
                 self.assertIn("x.pdf çok büyük", self.stop("hizli", "--ek", self.ek("x.pdf", b"%PDF-1")))
         self.assertEqual(self.gh.cagrilar, [])  # GitHub'a gidilmedi
@@ -2964,9 +2973,8 @@ class HizliTest(Base):
         self.assertNotIn("hizli", normal)  # yalnız hızlı taslakta gider
 
     def test_ne_yazan_ne_kopru(self):
-        mesaj = ("Claude Code'dan paylaşmak için GitHub hesabının TF Bilgi gelen kutusuna (Teamfluencer-Dev/"
-                 "tf-bilgi-gelen) yazma yetkisi olmalı: Enes'e yaz. O zamana kadar en hızlısı: dosyayı Slack'te TF Bilgi "
-                 "botuna DM at.")
+        mesaj = ("Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, sonra /paylas'ı tekrar "
+                 "dene.")
         os.environ["FAKE_GH_PUSH"] = "false"
         self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)
         self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)
@@ -2975,17 +2983,23 @@ class HizliTest(Base):
         self.assertEqual((code, out.strip()), (2, mesaj))
         os.environ["FAKE_GH_PUSH"] = "true"
         with mock.patch.object(tf_bilgi, "which", lambda ad: None if ad == "gh" else shutil.which(ad)):
-            self.assertIn("GitHub CLI (gh) kurulu değil", self.stop("hizli", stdin="not"))  # gh kurulu değil
+            self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)  # gh kurulu değil: GitHub'sız kişi
+        os.environ["FAKE_GH_LOGIN"] = ""  # gh var, oturum yok, bu makinede yazan görülmedi: anahtar yolu
+        (self.cache / "hizli.json").unlink()
+        self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
         os.environ["TF_BILGI_YOL"] = "dogrudan"
         os.environ["FAKE_GH_PUSH"] = "false"
         self.anahtar_kur()
         self.assertEqual(self.stop("hizli", stdin="not").strip(), mesaj)  # anahtar var ama yol doğrudana zorlandı
-        self.assertEqual(self.gh.cagrilar, [])
+        self.assertFalse([c for c in self.gh.cagrilar if c[0] != "GET"])  # yalnız kisiler.json okundu
+        self.assertFalse(self.zil_cagrilari())
 
     def test_yonetim_kendi_deposuna(self):
         r = self.hizli("--yonetim", "--ek", self.ek("butce.xlsx", b"PK\x03\x04"), not_metni="C-level için bütçe\n")
         self.assertEqual((r["alan"], r["yol"]), ("yonetim", "writer"))
-        self.assertIn(" · butce.xlsx + not · yönetim · kütüphaneci bugün 13:05 turunda ", r["satir"])
+        self.assertIn(" · butce.xlsx + not · yönetim · kütüphaneci birkaç dakika içinde ", r["satir"])
+        self.assertEqual(self.zil_cagrilari()[-1], ("POST", f"repos/{self.EKIP}/issues/10/labels"))  # yönetim zili
         meta = json.loads(self.kayit(self.YONETIM, r["kod"])["meta.json"])
         self.assertEqual((meta["alan"], meta["gonderen"]), ("yonetim", "ayse"))
         self.assertEqual(self.kayit(self.EKIP, r["kod"]), {})  # ekip deposuna hiçbir şey girmedi
@@ -3187,144 +3201,61 @@ class HizliTest(Base):
         kopru = SahteKopru({})
         with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
             self.assertEqual(self.hizli(not_metni="ekip")["yol"], "kopru")  # ekipte köprü yine çalışır
-        (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + anahtar + yönetim: köprü mesajı
-        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", self.stop("hizli", "--yonetim", stdin="yönetim"))
+        (self.cache / "hizli.json").unlink()  # yazan olduğu bilinmeyen makine + eski anahtar + yönetim
+        self.assertIn("Bu köprü anahtarı eski: yönetime gönderemez", self.stop("hizli", "--yonetim", stdin="yönetim"))
 
-    # --- 0.8.0: gelen kutusu deposu (bilgi deposuna yazamayan ekip üyesi) ---
+    # --- 0.9.0: bağlantılar notta, zil, alan kuralı ---
 
-    GELEN = "Teamfluencer-Dev/tf-bilgi-gelen"
+    def test_baglantilar_notta_gider_indirilmez(self):
+        """Claude artifact ve Google bağlantıları notun parçasıdır: eksiz de gider, hiçbir şey indirilmez."""
+        for baglanti in ("https://claude.ai/artifact/OrnekArtifactKimligi01", "https://claude.ai/code/artifact/ab-12",
+                         "https://claude.ai/public/artifacts/0b1c2d3e", "https://claude.site/artifacts/xyz",
+                         "https://docs.google.com/spreadsheets/d/1AbC/edit"):
+            r = self.hizli(not_metni=f"Ilgım baksın {baglanti}\n")
+            kayit = self.kayit(self.EKIP, r["kod"])
+            self.assertEqual(sorted(kayit), ["govde.md", "meta.json"], baglanti)
+            self.assertIn(baglanti, kayit["govde.md"].decode("utf-8"))
+        self.assertFalse(hasattr(tf_bilgi, "ARTIFACT_EKSIZ"))
 
-    def gelen_kur(self):
-        self.gh.depo_kur(self.GELEN, {"00-gelen/.gitkeep": "", "README.md": "# gelen\n"})
-        os.environ.update({"FAKE_GH_PUSH": "false", "FAKE_GH_PUSH_GELEN": "true"})
+    def test_zil_hatasi_paylasimi_bozmaz(self):
+        self.gh.hatalar[("POST", f"repos/{self.EKIP}/issues/9/labels")] = 500
+        r = self.hizli(not_metni="zil bozuk")
+        self.assertEqual(r["notlar"], ["Zil çalınamadı; kütüphaneci bir sonraki turda dosyalar."])
+        self.assertIn(" · kütüphaneci bir sonraki turunda dosyalar, ", r["satir"])
+        self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json"])  # paylaşım yazıldı
+        self.gh.etiketler[(self.EKIP, 9)] = {"zil"}
+        del self.gh.hatalar[("POST", f"repos/{self.EKIP}/issues/9/labels")]
+        r = self.hizli(not_metni="zil çalar")
+        self.assertEqual(r["notlar"], [])
+        self.assertEqual(self.zil_cagrilari()[-2:], [("DELETE", f"repos/{self.EKIP}/issues/9/labels/zil"),
+                                                     ("POST", f"repos/{self.EKIP}/issues/9/labels")])
+        with mock.patch.object(tf_bilgi, "gh_api", side_effect=OSError("beklenmeyen")):
+            notlar = []
+            self.assertFalse(tf_bilgi.zil_cal("ekip", notlar))  # her hata yutulur
+        self.assertEqual(notlar, ["Zil çalınamadı; kütüphaneci bir sonraki turda dosyalar."])
 
-    def test_gelen_deposu_yazamayan_ekip_uyesi(self):
-        self.gelen_kur()
-        os.environ["TF_BILGI_SIMDI"] = "2026-11-05T12:55:00+03:00"  # yazan 13:05'e yetişirdi; gelen aktarımı +15 dk
-        r = self.hizli("--ek", self.ek("rapor.pdf", b"%PDF-1.4 x"), not_metni="Nil baksın, Cuma'ya kadar\n")
-        kod = r["kod"]
-        self.assertEqual((r["alan"], r["yol"], r["dosyalar"]), ("ekip", "gelen", ["govde.md", "rapor.pdf"]))
-        self.assertIn(" · ekip · kütüphaneci bugün 15:05 turunda dosyalar", r["satir"])
-        kayit = self.kayit(self.GELEN, kod)
-        self.assertEqual(sorted(kayit), ["govde.md", "meta.json", "rapor.pdf"])
-        meta = json.loads(kayit["meta.json"])
-        self.assertEqual(list(meta), META_ANAHTARLARI)
-        self.assertEqual((meta["gonderen"], meta["gonderen_ham"], meta["alan"], meta["kaynak_kanal"]),
-                         ("ayse", "github:ayse-gh", "ekip", "claude-code"))  # kişi ekip deposunun kisiler.json'undan
-        self.assertEqual(self.kayit(self.EKIP, kod), {})  # bilgi deposuna hiçbir şey yazılmadı
-        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
-        self.assertFalse([c for c in self.gh.cagrilar if c[0] != "GET" and self.EKIP + "/" in c[1]])
-        out = self.stop("hizli", "--yonetim", stdin="yönetim için")
-        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", out)  # gelen deposu yalnız ekip
-        self.assertEqual(self.gh.mesajlar(self.YONETIM), ["tohum"])
-        os.environ["FAKE_GH_PUSH_GELEN"] = "false"
-        (self.cache / "hizli.json").unlink()
-        self.assertIn("tf-bilgi-gelen) yazma yetkisi olmalı", self.stop("hizli", stdin="not"))
-
-    def test_gelen_deposu_geri_al(self):
-        self.gelen_kur()
-        kod = self.hizli(not_metni="geri alacağım bunu")["kod"]
-        g = self.ok("geri-al", kod)
-        self.assertEqual((g["sonuc"], g["yol"]), ("silindi", "gelen"))
-        self.assertEqual(g["satir"], f"Geri alındı: {kod} TF Bilgi'ye aktarılmadan önce kaldırıldı.")
-        self.assertEqual(self.kayit(self.GELEN, kod), {})
-        kod = self.hizli(not_metni="aktarılacak bir not")["kod"]
-        klasor = f"20261105-123000-ayse-{kod[2:]}"
-        kayit = self.kayit(self.GELEN, kod)
-        self.gh.baskasi_yazar(self.GELEN, {**{f"00-gelen/{klasor}/{a}": None for a in kayit},
-                                           **{f"tasindi/{klasor}/{a}": v for a, v in kayit.items()}},
-                              "gelen-depo: aktarıldı")  # aktarım kaydı tf-bilgi'ye taşıdı
-        g = self.ok("geri-al", kod)
-        self.assertEqual((g["sonuc"], g["yol"]), ("kaydedildi", "gelen"))
-        meta = json.loads(self.kayit(self.GELEN, g["kod"])["meta.json"])
-        self.assertEqual((meta["tur"], meta["geri_alinan"], meta["gonderen"]), ("geri-al", kod, "ayse"))
-        self.gh.baskasi_yazar(self.GELEN, {"tasindi/20261105-090000-mert-z9z9z9/meta.json": "{}"})
-        once = self.gh.depolar[self.GELEN]["ref"]
-        self.assertEqual(self.stop("geri-al", "G-z9z9z9").strip(), "Bu kod senin paylaşımın değil.")
-        self.assertEqual(self.gh.depolar[self.GELEN]["ref"], once)
-        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
-
-    def test_artifact_baglantisi_eksiz_gitmez(self):
-        for baglanti in ("https://claude.ai/artifact/3N4hkg84BjfdHnXCNHBjJK", "https://claude.ai/code/artifact/ab-12",
-                         "https://claude.ai/public/artifacts/0b1c2d3e", "https://claude.site/artifacts/xyz"):
-            out = self.stop("hizli", stdin=f"Ilgım baksın {baglanti}\n")
-            self.assertIn("Claude artifact bağlantısı var ama ek yok", out, baglanti)
-        self.assertEqual(self.gh.cagrilar, [])  # hiçbir şey gönderilmedi
-        r = self.hizli("--ek", self.ek("sayfa.html", "<html>x</html>"),
-                       not_metni="https://claude.ai/artifact/3N4hkg84BjfdHnXCNHBjJK Ilgım baksın\n")
-        self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json", "sayfa.html"])
-        r = self.hizli(not_metni="Sprint planı: https://docs.google.com/spreadsheets/d/1AbC/edit Oğuz baksın\n")
-        self.assertEqual(sorted(self.kayit(self.EKIP, r["kod"])), ["govde.md", "meta.json"])  # Google bağlantısı gider
-
-    def test_gelen_yonetimi_goremeyen_uyeye_slack_yolu(self):
-        """review #14: yönetim deposu private; göremeyen (404) ekip üyesi "bulunamadı" değil, Slack yolunu duyar."""
-        self.gelen_kur()
-        os.environ["FAKE_GH_404_DEPOLAR"] = "tf-bilgi-yonetim"
-        out = self.stop("hizli", "--yonetim", stdin="yönetim için bütçe")
-        self.assertIn("yönetime yalnız Enes ve Ilgım gönderir", out)
-        self.assertNotIn("bulunamadı", out)
-        self.assertEqual(self.gh.mesajlar(self.YONETIM), ["tohum"])
-        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])
-
-    def test_gelen_kimlik_yalniz_github_girisinden(self):
-        """review #14: aktarım `gonderen_ham`'ı kişinin GitHub hesabıyla denetler; eşleşmeyen kimlik göndermeden durur."""
-        self.gelen_kur()
-        os.environ.update({"FAKE_GH_LOGIN": "tanimsiz-gh", "TF_BILGI_KISI": "ayse"})
-        out = self.stop("hizli", stdin="Nil baksın")
-        self.assertIn("GitHub hesabın (tanimsiz-gh) tf-bilgi kisiler.json'da senin adına kayıtlı olmalı", out)
-        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])  # hiçbir şey gönderilmedi
-        self.assertFalse([c for c in self.gh.cagrilar if c[0] == "POST"])
-
-    def test_gelen_dosya_sayisi_siniri(self):
-        self.gelen_kur()
-        ekler = []
-        for i in range(59):
-            ekler += ["--ek", self.ek(f"not-{i:02d}.md", f"not {i}")]
-        out = self.stop("hizli", *ekler, stdin="çok dosya")
-        self.assertIn("Tek paylaşımda en çok 58 dosya gider", out)
-        self.assertEqual(self.gh.mesajlar(self.GELEN), ["tohum"])
-        r = self.hizli(*ekler[:-2], not_metni="58 dosya + not")  # sınırda: 58 ek + govde.md + meta.json = 60
-        self.assertEqual((r["yol"], len(self.kayit(self.GELEN, r["kod"]))), ("gelen", 60))
-
-    def test_gelen_onbellekte_varsa_yazan_yetkisi_tazelenmez(self):
-        """review #14: yazamayan üyenin her paylaşımı bilgi deposu yetkisini ağdan yeniden sormasın."""
-        self.gelen_kur()
-        self.hizli(not_metni="birinci paylaşım")
-        self.hizli(not_metni="ikinci paylaşım")
-        self.assertEqual(len(self.yetki_cagrilari(self.EKIP)), 1)
-        self.assertEqual(len(self.yetki_cagrilari(self.GELEN)), 1)
-
-    def test_gelen_geri_al_dogrudan_zorlamasinda_da(self):
-        self.gelen_kur()
-        os.environ["TF_BILGI_YOL"] = "dogrudan"
-        kod = self.hizli(not_metni="geri alınacak")["kod"]
-        g = self.ok("geri-al", kod)
-        self.assertEqual((g["sonuc"], g["yol"]), ("silindi", "gelen"))
-
-    def test_gelen_kisiler_duzelince_ayni_gun_gecer(self):
-        """review #14 (N1): Enes kisiler.json'a github hesabını ekleyince bir gün beklemeden paylaşılır."""
-        self.gelen_kur()
-        os.environ.update({"FAKE_GH_LOGIN": "yeni-gh", "TF_BILGI_KISI": "mert"})
-        self.assertIn("GitHub hesabın (yeni-gh)", self.stop("hizli", stdin="ilk deneme"))
-        duzeltilmis = json.loads(json.dumps(KISILER))
-        duzeltilmis["kisiler"]["mert"]["github"] = "yeni-gh"
-        self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(duzeltilmis, ensure_ascii=False)})
-        r = self.hizli(not_metni="ikinci deneme")
-        self.assertEqual((r["yol"], json.loads(self.kayit(self.GELEN, r["kod"])["meta.json"])["gonderen"]),
-                         ("gelen", "mert"))
-
-    def test_gelen_deposu_gorunmuyorsa_ve_kopru_anahtariyla(self):
-        self.gelen_kur()
-        os.environ["FAKE_GH_404_DEPOLAR"] = "tf-bilgi-gelen"  # gelen deposu yok ya da üye eklenmedi
-        self.assertIn("tf-bilgi-gelen) yazma yetkisi olmalı", self.stop("hizli", stdin="not"))
-        del os.environ["FAKE_GH_404_DEPOLAR"]
-        (self.cache / "hizli.json").unlink()
-        self.anahtar_kur()
-        kopru = SahteKopru({})
-        with mock.patch.object(tf_bilgi, "kopru_tasi", kopru):
-            r = self.hizli(not_metni="anahtarı da var")
-        self.assertEqual(r["yol"], "gelen")  # GitHub yolu köprüden önce gelir
-        self.assertEqual(kopru.islemler("baslat"), [])
+    def test_alan_kurali_yazanda(self):
+        """§3: --yonetim/--ekip verilmezse alan nottan, gönderenden ve kisiler.json'dan seçilir."""
+        kisiler = json.loads(json.dumps(KISILER))
+        kisiler["kisiler"].update({"dilara": {"ad": "Dilara Örnek", "alanlar": ["ekip", "yonetim"]},
+                                   "ilgim": {"ad": "Ilgım Örnek", "alanlar": ["ekip", "yonetim"]}})
+        self.gh.baskasi_yazar(self.EKIP, {"kisiler.json": json.dumps(kisiler, ensure_ascii=False)})
+        for notu, alan, alicilar in (("Yöneticilere haftalık özet", "yonetim", None),
+                                     ("Dilara'ya sunum, Cuma'ya kadar", "yonetim", ["dilara"]),
+                                     ("Ilgım'a karar lazım", "ekip", ["ilgim"]),
+                                     ("Dilara ve Mert'e", "ekip", ["dilara", "mert"]),
+                                     ("ekip için Dilara'ya", "ekip", None),
+                                     ("Yönetim paneli hatası", "ekip", []),
+                                     ("Pazartesi notları", "ekip", [])):
+            r = self.hizli(not_metni=notu + "\n")
+            self.assertEqual((r["alan"], r["alicilar"]), (alan, alicilar), notu)
+            depo = self.YONETIM if alan == "yonetim" else self.EKIP
+            self.assertEqual(json.loads(self.kayit(depo, r["kod"])["meta.json"])["alan"], alan, notu)
+            self.assertEqual(self.zil_cagrilari()[-1][1], f"repos/{self.EKIP}/issues/{9 if alan == 'ekip' else 10}/labels")
+        r = self.hizli("--ekip", not_metni="Dilara'ya")  # bayrak kuralı ezer
+        self.assertEqual((r["alan"], r["alicilar"]), ("ekip", None))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            tf_bilgi.main(["hizli", "--ekip", "--yonetim"])  # ikisi birden olmaz
 
 
 class HizliYardimciTest(unittest.TestCase):
@@ -3357,13 +3288,309 @@ class HizliYardimciTest(unittest.TestCase):
         self.assertEqual(json.loads(girdi2), {"sha": "abc", "force": False})
         self.assertEqual((cmd3, girdi3), (["gh", "api", "repos/o/r/branches/main", "-X", "GET"], None))
 
-    def test_sonraki_tur(self):
-        for an, beklenen in (("2026-11-05T12:30:00+03:00", "bugün 13:05"), ("2026-11-05T09:03:00+03:00", "bugün 09:05"),
-                             ("2026-11-05T09:04:00+03:00", "bugün 11:05"), ("2026-11-05T06:00:00+03:00", "bugün 09:05"),
-                             ("2026-11-05T17:04:00+03:00", "yarın 09:05"), ("2026-11-06T17:30:00+03:00", "Pzt 09:05"),
-                             ("2026-11-07T10:00:00+03:00", "Pzt 09:05"), ("2026-11-08T23:00:00+03:00", "yarın 09:05"),
-                             ("2026-11-05T09:30:00+00:00", "bugün 13:05")):  # UTC 09:30 = İstanbul 12:30
-            self.assertEqual(tf_bilgi.sonraki_tur(datetime.datetime.fromisoformat(an)), beklenen, an)
+    def test_dosyalama_metni_ve_not_ozeti(self):
+        for d, beklenen in (("10 dk içinde", "10 dk içinde"), ("bugün 15:05", "bugün 15:05 turunda"),
+                            ("Pzt 09:05", "Pzt 09:05 turunda"), (None, "bir sonraki turunda"), ("", "bir sonraki turunda")):
+            self.assertEqual(tf_bilgi.dosyalama_metni(d), beklenen, d)
+        self.assertEqual(tf_bilgi.not_ozeti("\n Birinci satır \n\nikinci\n3\n4\n5\n6\n", "x.pdf"),
+                         ("Birinci satır", "Birinci satır\nikinci\n3\n4\n5"))
+        self.assertEqual(tf_bilgi.not_ozeti("  \n", "Çalışma Notu.pdf"), ("Çalışma Notu.pdf", ""))
+
+
+
+ALICI_VEKTORLERI = json.loads((Path(__file__).resolve().parent / "alici_vektorleri.json").read_text(encoding="utf-8"))
+
+
+class AlanKuraliTest(unittest.TestCase):
+    """Bitiş tasarımı §3: ekip mi yönetim mi. KB araclar/alici.py ile ortak vektörler (tests/alici_vektorleri.json)."""
+
+    def test_ortak_vektorler(self):
+        v = ALICI_VEKTORLERI
+        self.assertGreaterEqual(len(v["vektorler"]), 30)
+        for d in v["vektorler"]:
+            sonuc = tf_bilgi.alan_sec(d["metin"], d["gonderen"], v["kisiler"])
+            self.assertEqual((sonuc["alan"], sonuc["alicilar"]), (d["alan"], d["alicilar"]), d)
+            self.assertTrue(sonuc["neden"].startswith("kural "), d)
+
+    def test_kural_parametreleri_ortak_dosyayla_ayni(self):
+        v = ALICI_VEKTORLERI
+        self.assertEqual(tf_bilgi.YONETIM_KISILERI, frozenset(v["yonetim_kisileri"]))
+        self.assertEqual(tf_bilgi.YONETIMI_GORENLER, frozenset(v["yonetimi_gorenler"]))
+        self.assertEqual(tf_bilgi.YALNIZ_YONETIM, frozenset(v["yalniz_yonetim"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_KELIMELERI), tuple(v["yonetim_kelimeleri"]))
+        self.assertEqual(tuple(tf_bilgi.YONETIM_TAMLAMA_BASI), tuple(v["yonetim_tamlama_basi"]))
+        self.assertEqual(tuple(tf_bilgi.AD_EKLERI), tuple(v["ekler"]))
+
+    def test_kisiler_bos_ya_da_bilinmeyen(self):
+        self.assertEqual(tf_bilgi.alan_sec("Enes'e", None, {})["alan"], "ekip")  # rehber yok: alıcı bulunamaz
+        self.assertEqual(tf_bilgi.alan_sec("yönetim için", None, {})["alan"], "yonetim")
+        self.assertEqual(tf_bilgi.alan_sec("", "ogi", {})["alan"], "yonetim")
+        self.assertEqual(tf_bilgi.alan_sec("x", None, {"_not": "yorum", "enes": None})["alan"], "ekip")
+
+
+KOPRU_CF_GIZLI = "fedcba9876543210" * 4
+KOPRU_CF_ANAHTAR = f"tfb1.cf1.{KOPRU_CF_GIZLI}"
+OKUMA_YOK = "Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla gelir."
+
+
+class SahteWorker:
+    """Cloudflare Worker köprüsünün (cf1) ağsız karşılığı: JSON işlemler `kopru_tasi`, ham parçalar `kopru_ham_tasi`
+    yerine çağrılır. Belirteçler sahte ama opak: istemci yalnız geri getirir."""
+
+    def __init__(self):
+        self.cagrilar, self.adresler, self.parcalar, self.kayitlar = [], [], [], {}
+        self.hatalar = {}        # islem → (mesaj, kod)
+        self.parca_kopuk = {}    # (ad, sira) → kaç kez bağlantı hatası
+        self.parca_drive = {}    # (ad, sira) → kaç kez geçici Drive hatası
+        self.parca_red = {}      # (ad, sira) → (mesaj, kod): kalıcı ret
+        self.parca_bayt = 4
+        self.ben = "mert"
+        self.kisiler = {"ayse": {"ad": "Ayşe Örnek", "alanlar": ["ekip", "yonetim"]},
+                        "mert": {"ad": "Mert Örnek", "alanlar": ["ekip"]},
+                        "dilara": {"ad": "Dilara Örnek", "alanlar": ["ekip", "yonetim"]},
+                        "ilgim": {"ad": "Ilgım Örnek", "alanlar": ["ekip", "yonetim"]}}
+
+    @staticmethod
+    def yanit(veri):
+        return json.dumps(veri, ensure_ascii=False).encode("utf-8")
+
+    @staticmethod
+    def red(mesaj, kod):
+        return {"tamam": False, "kod": kod, "mesaj": mesaj, "hata": mesaj}
+
+    def islemler(self, ad=None):
+        return [c for c in self.cagrilar if ad is None or c["islem"] == ad]
+
+    def __call__(self, adres, veri, zaman_asimi):
+        g = json.loads(veri.decode("utf-8"))
+        self.adresler.append(adres)
+        self.cagrilar.append(g)
+        if g.get("anahtar") != KOPRU_CF_GIZLI or g.get("s") != 1:
+            return self.yanit(self.red("Anahtar tanınmadı.", "anahtar"))
+        islem = g["islem"]
+        if islem in self.hatalar:
+            return self.yanit(self.red(*self.hatalar[islem]))
+        if islem in ("oku", "ara", "yorumlar", "yorum", "tercih"):
+            return self.yanit(self.red(OKUMA_YOK, "desteklenmiyor"))
+        return self.yanit({"tamam": True, **getattr(self, "i_" + islem.replace("-", "_"))(g)})
+
+    def ham(self, adres, veri, basliklar, zaman_asimi):
+        self.parcalar.append((adres, dict(basliklar), len(veri)))
+        if basliklar.get("Authorization") != f"Bearer {KOPRU_CF_ANAHTAR}":
+            return self.yanit(self.red("Anahtar tanınmadı.", "anahtar"))
+        _, kod, ad = basliklar["X-Tfb-Yukleme"].split("|")
+        sira = int(basliklar["X-Tfb-Sira"])
+        if self.parca_kopuk.get((ad, sira)):
+            self.parca_kopuk[(ad, sira)] -= 1
+            raise tf_bilgi.urllib.error.URLError("bağlantı koptu")
+        if self.parca_drive.get((ad, sira)):
+            self.parca_drive[(ad, sira)] -= 1
+            return self.yanit(self.red("Drive yüklemesi kesildi; aynı parçayı yeniden gönder.", "drive"))
+        if (ad, sira) in self.parca_red:
+            return self.yanit(self.red(*self.parca_red[(ad, sira)]))
+        k = self.kayitlar[kod]
+        beklenen = k["sira"].get(ad, 0)
+        if sira >= beklenen:
+            assert sira == beklenen, "sıra dışı parça"
+            assert basliklar["Content-Type"] == "application/octet-stream"
+            k["veri"][ad] += veri
+            k["sira"][ad] = sira + 1
+        alinan = len(k["veri"][ad])
+        return self.yanit({"tamam": True, "kod": kod, "ad": ad, "sira": sira, "alinan": alinan,
+                           "bitti": alinan == k["beyan"][ad]["boyut"]})
+
+    def i_kim(self, g):
+        return {"kisi": self.ben, "ad": self.kisiler[self.ben]["ad"], "dagitim": "cf1", "surum": "1", "okuma": False,
+                "depo": "Teamfluencer-Dev/tf-bilgi", "kisiler": self.kisiler,
+                "sinirlar": {"parca_bayt": self.parca_bayt, "dosya_azami_bayt": 94371840,
+                             "kayit_azami_bayt": 943718400, "dosya_azami_sayi": 10}}
+
+    def i_baslat(self, g):
+        assert g["alan"] in ("ekip", "yonetim")
+        kod = "G-cf%04d" % len(self.kayitlar)
+        self.kayitlar[kod] = {"g": g, "beyan": {d["ad"]: d for d in g["dosyalar"]},
+                              "veri": {d["ad"]: b"" for d in g["dosyalar"]}, "sira": {}, "bitti": False}
+        return {"kod": kod, "kayit": f"20261107-210000-{self.ben}-{kod[2:]}", "alan": g["alan"],
+                "parca_bayt": self.parca_bayt, "durum": f"durum|{kod}",
+                "yuklemeler": {d["ad"]: f"yk|{kod}|{d['ad']}" for d in g["dosyalar"]}, "dosyalama": "10 dk içinde"}
+
+    def i_bitir(self, g):
+        k = self.kayitlar[g["kod"]]
+        assert g["durum"] == "durum|" + g["kod"]
+        for ad, beyan in k["beyan"].items():
+            assert len(k["veri"][ad]) == beyan["boyut"], ad
+            assert hashlib.sha256(k["veri"][ad]).hexdigest() == beyan["sha256"], ad
+        k["bitti"] = True
+        return {"kod": g["kod"], "kayit": "kayit", "alan": k["g"]["alan"], "dosyalar": list(k["beyan"]),
+                "dosyalama": "10 dk içinde"}
+
+    def i_geri_al(self, g):
+        k = self.kayitlar.get(g["hedef"])
+        if k and not k["bitti"]:
+            return {"sonuc": "durduruldu", "hedef": g["hedef"]}
+        return {"sonuc": "kaydedildi", "hedef": g["hedef"], "kod": "G-cfgeri", "kayit": "k", "dosyalama": "10 dk içinde"}
+
+    def i_alindi(self, g):
+        return {"kod": "G-cfalnd", "kayit": "k", "dosyalama": "10 dk içinde"}
+
+
+class WorkerKopruTest(Base):
+    """0.9.0: GitHub'ı olmayan herkes Slack botunun verdiği `tfb1.cf1.…` anahtarıyla Worker köprüsünden paylaşır."""
+    EKIP = "Teamfluencer-Dev/tf-bilgi"
+
+    def setUp(self):
+        super().setUp()
+        for ad in ("TF_BILGI_UZAK_EKIP", "TF_BILGI_UZAK_YONETIM"):
+            os.environ.pop(ad, None)
+        os.environ.update({"FAKE_GH_LOGIN": "", "TF_BILGI_SIMDI": "2026-11-07T21:00:00+03:00"})  # Cumartesi gecesi
+        self.gh = SahteGitHub({self.EKIP: {"kisiler.json": json.dumps(KISILER, ensure_ascii=False)}})
+        self.worker = SahteWorker()
+        for ad, deger in (("gh_api", self.gh), ("KOPRU_BEKLE", 0), ("KB_SHA256", ()), ("kopru_tasi", self.worker),
+                          ("kopru_ham_tasi", self.worker.ham)):
+            yama = mock.patch.object(tf_bilgi, ad, deger)
+            yama.start()
+            self.addCleanup(yama.stop)
+        self.cache.mkdir(parents=True, exist_ok=True)
+        (self.cache / "anahtar").write_text(KOPRU_CF_ANAHTAR + "\n")  # Slack botunun tek satırlık kurulumu
+        self.ekler = self.tmp / "ekler"
+        self.ekler.mkdir()
+
+    def ek(self, ad, icerik):
+        yol = self.ekler / ad
+        yol.write_bytes(icerik if isinstance(icerik, bytes) else icerik.encode("utf-8"))
+        return str(yol)
+
+    def test_anahtar_bicimi_ve_adres(self):
+        self.assertEqual(tf_bilgi.anahtar_coz(KOPRU_CF_ANAHTAR), ("cf1", KOPRU_CF_GIZLI))
+        self.assertIsNone(tf_bilgi.anahtar_coz(f"tfb1.c1.{KOPRU_CF_GIZLI}"))  # dağıtım kimliği en az 3 karakter
+        self.assertEqual(tf_bilgi.ANAHTAR_ARA_RE.findall(f"x {KOPRU_CF_ANAHTAR} y"), [KOPRU_CF_ANAHTAR])
+        self.assertTrue(tf_bilgi.KOPRU_CF_ADRES.startswith("https://tf-bilgi-kopru."))
+        self.assertTrue(tf_bilgi.KOPRU_CF_ADRES.endswith(".workers.dev"))
+        self.assertEqual(tf_bilgi.kopru_adresi("cf1"), tf_bilgi.KOPRU_CF_ADRES)
+        self.assertEqual(tf_bilgi.kopru_parca_adresi("cf1"), tf_bilgi.KOPRU_CF_ADRES + "/parca")
+        self.assertEqual(tf_bilgi.kopru_adresi(KOPRU_DAGITIM), f"https://script.google.com/macros/s/{KOPRU_DAGITIM}/exec")
+        os.environ["TF_BILGI_KOPRU_URL"] = "https://ornek.test/kopru/"
+        self.assertEqual((tf_bilgi.kopru_adresi("cf1"), tf_bilgi.kopru_parca_adresi("cf1")),
+                         ("https://ornek.test/kopru/", "https://ornek.test/kopru/parca"))
+
+    def test_paylas_ham_parcalar_ve_makbuz(self):
+        pdf = self.ek("Çalışma Notu.pdf", b"%PDF-1.4 \x00\x01\xff ikili veri")
+        bos = self.ek("bos.txt", b"")
+        r = self.ok("hizli", "--ek", pdf, "--ek", bos, stdin="Ayşe'ye bilgi\nikinci satır\n")
+        kod = r["kod"]
+        self.assertEqual((kod, r["yol"], r["alan"], r["alicilar"], r["dosyalar"], r["notlar"]),
+                         ("G-cf0000", "kopru", "ekip", ["ayse"], ["govde.md", "Calisma-Notu.pdf", "bos.txt"], []))
+        self.assertEqual(r["satir"], f"Gönderildi ✓ {kod} · Çalışma Notu.pdf, bos.txt + not · ekip · kütüphaneci 10 dk "
+                                     f"içinde dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al {kod}")
+        self.assertEqual([c["islem"] for c in self.worker.cagrilar], ["kim", "baslat", "bitir"])  # kim bir kez
+        self.assertEqual(set(self.worker.adresler), {tf_bilgi.KOPRU_CF_ADRES})
+        b = self.worker.islemler("baslat")[0]
+        self.assertEqual(b["taslak"], HIZLI_TASLAK)
+        self.assertEqual((b["alan"], b["konu_satiri"], b["aciklama"]),
+                         ("ekip", "Ayşe'ye bilgi", "Ayşe'ye bilgi\nikinci satır"))
+        self.assertEqual(self.worker.islemler("bitir")[0]["durum"], f"durum|{kod}")
+        kayit = self.worker.kayitlar[kod]
+        self.assertTrue(kayit["bitti"])
+        self.assertEqual(kayit["veri"], {"govde.md": "Ayşe'ye bilgi\nikinci satır\n".encode(),
+                                         "Calisma-Notu.pdf": Path(pdf).read_bytes(), "bos.txt": b""})
+        for adres, basliklar, uzunluk in self.worker.parcalar:  # ham gövde, base64 yok, anahtar başlıkta
+            self.assertEqual(adres, tf_bilgi.KOPRU_CF_ADRES + "/parca")
+            self.assertLessEqual(uzunluk, 4)
+            self.assertEqual(basliklar["Authorization"], f"Bearer {KOPRU_CF_ANAHTAR}")
+        self.assertEqual([p[1]["X-Tfb-Sira"] for p in self.worker.parcalar if p[1]["X-Tfb-Yukleme"].endswith("|bos.txt")],
+                         ["0"])  # boş dosya: tek boş parça
+        self.assertNotIn(KOPRU_CF_GIZLI, json.dumps(r))
+        self.assertFalse([c for c in self.gh.cagrilar])  # GitHub'a gidilmedi
+        self.assertFalse((self.cache / "kopru").exists())  # ayna, kb.py yok
+        self.assertEqual(json.loads((self.cache / "hizli.json").read_text())["gonderilen"][kod]["yol"], "kopru")
+
+    def test_alan_kurali_koprude_kim_rehberiyle(self):
+        for notu, alan, alicilar in (("Ilgım'a karar lazım", "ekip", ["ilgim"]), ("Dilara'ya sunum", "yonetim", ["dilara"]),
+                                     ("Pazartesi notları", "ekip", []), ("C-level özeti", "yonetim", None)):
+            r = self.ok("hizli", stdin=notu + "\n")
+            self.assertEqual((r["alan"], r["alicilar"]), (alan, alicilar), notu)
+            self.assertEqual(self.worker.islemler("baslat")[-1]["alan"], alan, notu)
+        self.worker.ben = "dilara"  # kural 3: alıcısız, gönderen yalnız yönetimde
+        self.assertEqual(self.ok("hizli", stdin="toplantı notları")["alan"], "yonetim")
+        r = self.ok("hizli", "--ekip", stdin="Dilara'ya")
+        self.assertEqual((r["alan"], self.worker.islemler("baslat")[-1]["alan"]), ("ekip", "ekip"))
+        r = self.ok("hizli", "--yonetim", "--ek", self.ek("a.md", "a"))  # Worker anahtarı yönetime de gönderir
+        self.assertEqual(self.worker.islemler("baslat")[-1]["alan"], "yonetim")
+
+    def test_parca_yeniden_denenir_kalici_hata_geri_alir(self):
+        dosya = self.ek("rapor.md", "0123456789abc")  # 4 baytlık parçalar: 0..3
+        self.worker.parca_kopuk[("rapor.md", 1)] = 1
+        self.worker.parca_drive[("rapor.md", 2)] = 2
+        r = self.ok("hizli", "--ekip", "--ek", dosya)
+        self.assertEqual(self.worker.kayitlar[r["kod"]]["veri"]["rapor.md"], b"0123456789abc")
+        siralar = [p[1]["X-Tfb-Sira"] for p in self.worker.parcalar]
+        self.assertEqual(siralar, ["0", "1", "1", "2", "2", "2", "3"])
+        self.worker.parca_red[("rapor.md", 1)] = ("rapor.md: sıra dışı parça (beklenen 0, gelen 1).", "durum")
+        out = self.stop("hizli", "--ekip", "--ek", dosya)
+        self.assertIn("Gönderim yarıda kaldı: rapor.md: sıra dışı parça", out)
+        self.assertIn("kaydı durdurdum (G-cf0001), hiçbir şey dosyalanmayacak", out)
+        self.assertEqual(self.worker.islemler("geri-al")[-1]["hedef"], "G-cf0001")
+        self.assertFalse(self.worker.kayitlar["G-cf0001"]["bitti"])
+        with mock.patch.object(self.worker, "i_baslat", lambda g: {"kod": "G-cf0009", "parca_bayt": 4, "durum": "d",
+                                                                   "yuklemeler": {}}):
+            out = self.stop("hizli", "--ekip", "--ek", dosya)  # eksik belirteç: yanıt anlaşılmadı, kayıt durdurulur
+        self.assertIn("yanıtı anlaşılamadı", out)
+        self.assertEqual(self.worker.islemler("geri-al")[-1]["hedef"], "G-cf0009")
+
+    def test_kopru_url_ezer_ve_ayar_hatasi_aynen(self):
+        os.environ["TF_BILGI_KOPRU_URL"] = "https://ornek.test/k"
+        self.ok("hizli", "--ekip", stdin="not")
+        self.assertEqual(set(self.worker.adresler), {"https://ornek.test/k"})
+        self.assertEqual({p[0] for p in self.worker.parcalar}, {"https://ornek.test/k/parca"})
+        self.worker.hatalar["kim"] = ("Köprü kurulumu bitmedi; Enes'e haber ver.", "ayar")
+        self.assertEqual(self.stop("hizli", "--ekip", stdin="not").strip(), "Köprü kurulumu bitmedi; Enes'e haber ver.")
+
+    def test_okuma_desteklenmiyor_sade_cumle(self):
+        self.assertEqual(self.stop("hazirla").strip(), OKUMA_YOK)  # ağa gitmeden
+        self.assertEqual(self.stop("hazirla", "--yazma").strip(),
+                         "Köprü anahtarıyla yalnız /paylas çalışır: dosyaları /paylas ile ya da Slack'te TF Bilgi "
+                         "botuna gönder.")
+        self.assertEqual(self.worker.cagrilar, [])
+        self.assertEqual(self.stop("ara", "abonelik").strip(), OKUMA_YOK)  # Worker'ın desteklenmiyor yanıtı
+        self.assertEqual(self.stop("oku", "SON.md").strip(), OKUMA_YOK)
+        self.assertEqual(self.stop("tercih").strip(), OKUMA_YOK)
+        self.assertIn("yalnız /paylas çalışır", self.stop("gonder", "--taslak", "/x/taslak.json"))
+        self.assertEqual(self.worker.islemler("ara")[0]["sorgu"], "abonelik")
+        g = self.ok("alindi", "B-20261029-ayse-01")  # alındı Worker'da var
+        self.assertEqual(g["satir"], "Alındın gönderildi: B-20261029-ayse-01 · kütüphaneci 10 dk içinde kaydeder.")
+        g = self.ok("geri-al", "G-cf7777")
+        self.assertEqual((g["yol"], g["sonuc"]), ("kopru", "kaydedildi"))
+        self.assertIn("kütüphaneci 10 dk içinde işler", g["satir"])
+
+    def test_okuma_gh_girisi_varsa_dogrudan(self):
+        self.assertEqual(tf_bilgi.yol_sec(), "kopru")
+        os.environ["FAKE_GH_LOGIN"] = "mert-gh"
+        self.assertEqual(tf_bilgi.yol_sec(), "dogrudan")  # Worker anahtarı okumaz; GitHub'dan okuyabilen okur
+        os.environ["TF_BILGI_YOL"] = "kopru"
+        self.assertEqual(tf_bilgi.yol_sec(), "kopru")
+
+    def test_kur_cf1_anahtari(self):
+        (self.cache / "anahtar").unlink()
+        dosya = self.cache / "gecici" / "anahtar.txt"
+        dosya.parent.mkdir(parents=True, exist_ok=True)
+        dosya.write_text("Botun gönderdiği: " + KOPRU_CF_ANAHTAR + "\n")
+        r = self.ok("kur", "--dosya", str(dosya))
+        self.assertEqual((r["kuruldu"], r["kisi"]), (True, "mert"))
+        self.assertEqual(r["satir"], "Köprü anahtarı kuruldu: Mert Örnek (mert). /paylas artık GitHub'sız çalışır; "
+                                     "belgeler sana Slack'ten bağlantıyla gelir.")
+        self.assertEqual((self.cache / "anahtar").read_text().strip(), KOPRU_CF_ANAHTAR)
+        self.assertEqual((self.cache / "anahtar").stat().st_mode & 0o777, 0o600)
+        self.assertFalse(dosya.exists())
+        self.assertEqual(self.worker.adresler, [tf_bilgi.KOPRU_CF_ADRES])
+        self.assertNotIn(KOPRU_CF_GIZLI, json.dumps(r))
+        durum = self.ok("kur")
+        self.assertEqual((durum["anahtar"], durum["gecerli"], durum["kisi"]), (True, True, "mert"))
+
+    def test_ne_yazan_ne_anahtar_tek_satir(self):
+        (self.cache / "anahtar").unlink()
+        code, out = self.run_main("hizli", stdin="not")
+        self.assertEqual((code, out), (2, "Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, "
+                                          "sonra /paylas'ı tekrar dene.\n"))
 
 
 if __name__ == "__main__":

@@ -113,16 +113,16 @@ tek komutla yazmayı (`/paylas`), bir klasör dolusu belgeyi toplu paylaşmayı 
 okumayı ve belgeler üzerine yorumlaşmayı (`/bilgi`, `/bilgi yorum`) sağlar. Kuralların tek kaynağı
 KB deposundaki `araclar/kb.py` ve `CLAUDE.md`'dir; eklenti yalnız onu çağırır.
 
-**0.8.0: Claude Code'u olan herkes** (Enes, 7 Kas). Bilgi deposuna yazma yetkisi yalnız Enes ve
-Ilgım'da kalır; diğer ekip üyelerinin `/paylas`'ı aynı tek commit'i ayrı **gelen kutusu deposuna**
-(`Teamfluencer-Dev/tf-bilgi-gelen`; yalnız bu depoya yazma yetkisi, sır ve iş akışı yok) atar.
-tf-bilgi'nin `gelen-depo` iş akışı (hafta içi 15 dakikada bir) kaydı olduğu gibi `00-gelen/`'e
-aktarır, kütüphaneci her hızlı kayıt gibi dosyalar. Kişi ekip deposunun `kisiler.json`'undan
-(`gh` girişi) bulunur. Yönetime Claude Code'dan yalnız yönetim deposuna yazanlar gönderir; diğerleri
-Slack botuna "yönetim için" yazar. Claude artifact bağlantısı (`claude.ai/…artifact…`) verilirse
-`/paylas` artifact'ı Artifact aracıyla indirip ek olarak gönderir (kütüphaneci artifact'ı açamaz;
-eksiz artifact bağlantısında yardımcı durur); Google Docs/Drive bağlantıları notta kalır,
-kütüphaneci açar.
+**0.9.0: Claude Code'u olan herkes, GitHub'sız da** (Enes, 7 Kas; bitiş tasarımı §3–§5). Bilgi deposuna yazma
+yetkisi yalnız Enes ve Ilgım'da kalır. Diğer herkes kişi anahtarıyla (`tfb1.cf1.…`) **Cloudflare Worker köprüsünden**
+gönderir: Slack'te TF Bilgi botuna `anahtar` yazınca bot tek satırlık kurulumu DM'den verir (eklenti kurulumu +
+`~/.tf-bilgi/anahtar`). Worker dosyaları ortak drive'a (`00-Gelen/claude/` ya da `01-Yonetim-Gelen/claude/`) yazar,
+kütüphaneci oradan dosyalar. GitHub hesabı gerekmez. Worker yalnız paylaşım alır; `/bilgi` okuması köprüde yok
+("Okuma köprüde yok: belgeler sana Slack'ten bağlantıyla gelir."; GitHub oturumu olan doğrudan okur). Gelen kutusu
+deposu (`tf-bilgi-gelen`, 0.8.0) kaldırıldı. Claude artifact ve Google bağlantıları indirilmez: notun parçası olarak
+gider, kütüphaneci nottan sınıflar. Yazanın commit'inden sonra eklenti **zili çalar** (`Teamfluencer-Dev/tf-bilgi`
+issue #9 ekip / #10 yönetim üzerinde `zil` etiketi kaldırılıp yeniden eklenir): kütüphaneci birkaç dakika içinde
+dosyalar; zil çalınamazsa paylaşım yine kaydedilir. Mesai ve sessiz saat yok (7/24), soru yok.
 
 **0.7.0: `/paylas` anında** (7 Kas kararı). Slack'ten göndermekten hızlı olmalı: Claude belgeyi
 açmaz, okumaz, özetlemez, taslak yazmaz ve hiçbir şey sormaz. Tek komut
@@ -130,11 +130,11 @@ açmaz, okumaz, özetlemez, taslak yazmaz ve hiçbir şey sormaz. Tek komut
 bırakır, tek satır makbuz verir:
 
 ```
-Gönderildi ✓ G-ab12cd · rapor.html, ozet.md + not · ekip · kütüphaneci bugün 13:05 turunda dosyalar, alıcılara o zaman haber gider · geri al: /paylas geri-al G-ab12cd
+Gönderildi ✓ G-ab12cd · rapor.html, ozet.md + not · ekip · kütüphaneci birkaç dakika içinde dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al G-ab12cd
 ```
 
-Türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci bir sonraki turunda (hafta içi 09:05,
-11:05, 13:05, 15:05, 17:05) çıkarır. Makbuz gönderilen dosyaların adlarını söyler (uzunsa
+Türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci çıkarır (yazan: zille birkaç dakika içinde; köprü: Drive gelen
+kutusu taramasıyla ~10 dakika içinde). Makbuz gönderilen dosyaların adlarını söyler (uzunsa
 kısaltılır, 3'ten fazlası "+N dosya"). Yol verilmezse bu konuşmanın kendi çıktısı (artifact
 HTML, PDF, rapor) `--otomatik` ile gider: yardımcı o zaman yalnız belge benzeri dosyaları
 (html/htm, pdf, md, txt, docx, pptx, xlsx, csv, png/jpg/jpeg/gif/webp) kabul eder; kod,
@@ -146,32 +146,34 @@ Yol yardımcıda seçilir:
 | Kim | Ne olur |
 |---|---|
 | Depoya yazabilen (push yetkisi; `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
-| Yazamayan, gelen kutusu deposuna yazabilen (0.8.0; yalnız ekip) | Aynı tek commit `Teamfluencer-Dev/tf-bilgi-gelen` `00-gelen/`'e; makbuzdaki tur aktarım payıyla (+15 dk) hesaplanır. Geri alma: aktarılmadıysa kayıt kaldırılır, aktarıldıysa (`tasindi/`) geri-al kaydı yazılır |
-| Yazamayan, köprü anahtarı olan | Köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar); yalnız ekip alanı |
-| Hiçbiri yok | Durur: "GitHub hesabının TF Bilgi gelen kutusuna yazma yetkisi olmalı: Enes'e yaz; o zamana kadar dosyayı Slack'te TF Bilgi botuna DM at" (`gh` kurulu değilse `brew install gh` ve `gh auth login`) |
-| `gh` kurulu ama oturum kapalı ya da bağlantı yok (anahtar yoksa; yönetimde bu makinede yazan görülmüşse anahtar olsa da) | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
+| Yazamayan, köprü anahtarı olan (`tfb1.cf1.…`) | Worker köprüsünden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar; parçalar ham baytla `/parca`'ya, aynı parçanın tekrarı güvenli); ekip ya da yönetim alanı. Dosya başı 90 MB, en çok 10 dosya. Eski Apps Script anahtarı (`tfb1.<dağıtım>.…`) eski adrese gider, yönetime gönderemez |
+| Hiçbiri yok | Çıkış 2, tek satır: "Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, sonra /paylas'ı tekrar dene." |
+| `gh` kurulu ama oturum kapalı ya da bağlantı yok ve bu makinede daha önce yazma yetkisi görülmüş | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
 
-Sözlerde tam kelime olarak yönetim, yönetime, "yönetim için", yönetici, yöneticiler,
-yöneticilere, C-level ya da `--yonetim` geçerse paylaşım yönetim alanına gider ("hesap
-yöneticisi", "proje yöneticisi", "yöneticisine", "yönetim paneli" gibi tamlamalar değil;
-köprüde yönetim yok: Slack botuna "yönetim" yazarak gönderilir); "acil", "hemen haber ver"
-→ `haber: simdi`. `/paylas geri-al <kod>` yalnız kendi paylaşımını geri alır: yazanın
+**Alan (ekip mi yönetim mi) yardımcıda, deterministik** (bitiş tasarımı §3; KB `araclar/alici.py` ile aynı kural,
+ortak vektörler `tests/alici_vektorleri.json`): önce sözlerdeki bağlantılar ve TF Bilgi kimlikleri atılır; "ekip için"
+ya da `--ekip` → ekip; tam kelime yönetim, yönetime, yönetici, yöneticiler, yöneticilere, C-level ya da `--yonetim` →
+yönetim ("hesap yöneticisi", "yönetim paneli" gibi tamlamalar değil); yoksa adı geçen alıcıların hepsi yönetimi
+görebilenlerden (Enes, Ilgım, Dilara, Ogi) ve en az biri yönetim kişisiyse (Enes, Dilara, Ogi) → yönetim ("Enes'e" →
+yönetim, "Ilgım'a" → ekip, "Enes ve Abdullah'a" → ekip; birden çok kişiye uyan ad sayılmaz); alıcı yoksa yalnız
+yönetimde olan gönderen (Dilara, Ogi) → yönetim, değilse ekip. Kişi listesi yazanda depodaki `kisiler.json`'dan,
+köprüde Worker'ın `kim` yanıtından (yalnız ad ve alanlar) gelir. Alıcılara her zaman anında haber gider. `/paylas geri-al <kod>` yalnız kendi paylaşımını geri alır: yazanın
 kaydı henüz `00-gelen/`'deyse tek commit'le kaldırılır ("içerik git geçmişinde durur;
 gerekiyorsa Enes'e haber ver"), dosyalandıysa (`arsiv/00-gelen/`) kütüphaneciye geri-al
 kaydı yazılır; kod başkasının kaydıysa "Bu kod senin paylaşımın değil." der ve hiçbir şey
 yazmaz (kütüphaneci de GOREV 2.G.0'da hedef klasörün `-<gonderen>-<kimlik>` olmasını
-şart koşar). Köprü kodları bugünkü gibi köprüden geri alınır. Gizli kip ve PR listesi ayrı başvuru
+şart koşar). Köprü kodları köprüden geri alınır (süren yükleme durur, bitmiş kayıt için geri-al kaydı yazılır). Gizli kip ve PR listesi ayrı başvuru
 dosyalarındadır (`skills/paylas/references/`), yalnız açıkça istenince okunur.
 
 0.6.0'dan beri iki yol var (gizli paylaşım, `/toplu-paylas`, `/bilgi`):
 
 | Yol | Kim | Nasıl |
 |---|---|---|
-| **Köprü** | Köprü anahtarı olan herkes (GitHub hesabı gerekmez) | Taslağı ve dosyaları (gizli `/paylas`, `/toplu-paylas`) TF Bilgi köprüsüne (Google Apps Script web uygulaması) gönderir; köprü onları ortak drive'daki gelen kutusuna yazar, kütüphaneci bir sonraki turunda (hafta içi 09:05–17:05) yeniden tarayıp dosyalar. Okuma, arama, yorum ve tercih de köprüden |
+| **Köprü** | Köprü anahtarı olan herkes (GitHub hesabı gerekmez) | 0.9.0: Worker köprüsü (`cf1`) yalnız `/paylas`'ı (ve `geri-al`) taşır; `/bilgi` okuması, gizli paylaşım ve `/toplu-paylas` köprüde yok (sade bir cümleyle durur). Eski Apps Script köprüsü (kurulmadı) okuma, arama, yorum ve tercihi de taşırdı |
 | **Doğrudan** | Anahtarı olmayan, depoya yazma yetkisi olanlar (KB `.kb.json` `yazanlar`) | Bugünkü akış: önbellek klonu, `kb.py`, commit ve push |
 
 Yol `TF_BILGI_YOL` (`kopru` · `dogrudan`) ile zorlanır; yoksa `~/.tf-bilgi/anahtar` varsa
-köprü, yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogrudan` ile seçer.
+köprü (Worker anahtarında `gh` girişi varsa okuma doğrudan), yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogrudan` ile seçer.
 
 ### Kurulum (her geliştirici, bir kez)
 
@@ -179,21 +181,21 @@ köprü, yoksa doğrudan. Anahtarı olan yazan doğrudan yolu `TF_BILGI_YOL=dogr
 claude plugin marketplace add Teamfluencer-Dev/.github && claude plugin install tf-bilgi@teamfluencer
 ```
 
-Tek satırdır (marketplace zaten ekliyse ilk yarısı "already on disk" deyip geçer). Gerekenler: `gh auth login`
-yapılmış olmalı ve GitHub hesabın gelen kutusu deposuna yazabilmeli (Enes ekler).
+Tek satırdır (marketplace zaten ekliyse ilk yarısı "already on disk" deyip geçer). `.github` deposu herkese açık:
+eklenti kurulumu GitHub hesabı istemez.
 
-Köprü yolu için: Python 3.9+ ve TF Bilgi sorumlusunun özel olarak gönderdiği **köprü anahtarı**
-(tek satır, `tfb1.` ile başlar). Claude Code'da bir kez `/bilgi kur <anahtar>` yazılır: anahtar
+Köprü yolu için: Python 3.9+ ve kişi **köprü anahtarı** (tek satır, `tfb1.cf1.` ile başlar). Slack'te TF Bilgi
+botuna `anahtar` yazılır; bot DM'den tek satırlık kurulumu verir (eklenti kurulumu, `~/.tf-bilgi/anahtar` 0600).
+Elle kurmak için Claude Code'da bir kez `/bilgi kur <anahtar>` yazılır: anahtar
 Write aracıyla geçici dosyaya yazılır (kabuk argümanına girmez), köprüyle doğrulanır,
 `~/.tf-bilgi/anahtar`'a yalnız sizin okuyabileceğiniz biçimde (0600) kaydedilir ve geçici dosya
-silinir. Anahtar kişiye özeldir; köprü yalnız SHA-256'sını tutar, sorumlu geri alabilir.
+silinir. Anahtar kişiye özeldir (tohumdan türetilir, köprü saklamaz); iptal için kişinin sürümü artırılır.
 
 Doğrudan yol için: git, Python 3.9+, `gh auth login` ve GitHub hesabınızın KB deposuna okuma
 yetkisi. **Yazma** (`/paylas`, `/toplu-paylas`, `/bilgi alindi`) için depoya yazma yetkisi
 gerekir; 6 Kas 2026'dan beri bu yetki yalnız KB deposunun `.kb.json` `yazanlar` listesindeki
-kişilerde. Anahtarı ve yetkisi olmayanda eklenti taslak hazırlamadan durur ve köprü anahtarı
-istemesini söyler; anahtar gelene kadar yedek yollar: Slack'teki TF Bilgi botu ya da depoya
-yazabilen biri. Okuma (`/bilgi`), bildirim tercihi (`/bilgi tercih`) ve yorum (`/bilgi yorum`,
+kişilerde. Anahtarı ve yetkisi olmayanda eklenti durur ve Slack botundan anahtar almasını söyler;
+yedek yol: belgeyi Slack'teki TF Bilgi botuna DM atmak. Okuma (`/bilgi`), bildirim tercihi (`/bilgi tercih`) ve yorum (`/bilgi yorum`,
 `/bilgi yorumlar`) okuma yetkisiyle çalışır. Eklenti model çağırmaz, API anahtarı istemez;
 `tf-review` ile yan yana çalışır. Kurulum her yapılandırma klasörü (`CLAUDE_CONFIG_DIR`) için
 ayrı yapılır.
@@ -207,14 +209,14 @@ ayrı yapılır.
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /paylas api#1976 web#689 merge sırası devri   # PR tablosu gh ile kurulur, dosya olarak gider
 /paylas gizli: Ayşe'ye, yalnız o görsün ./teklif.pdf   # belge okunmaz, Drive'da paylaşılır
-/paylas geri-al G-4k9x2m     # makbuzdaki kod (yazan: GitHub'dan; diğerleri köprüden) ya da kendi girdi kimliğin
+/paylas geri-al G-4k9x2m     # makbuzdaki kod (yazan: GitHub'dan; diğerleri Worker köprüsünden) ya da kendi girdi kimliğin
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
 /bilgi konu K-0003
 /bilgi ara abonelik
 /bilgi oku B-20261105-ayse-01            # tek girdi (köprüde gizli girdi yalnız alıcısına)
-/bilgi kur tfb1.…                        # köprü anahtarını bir kez kur
+/bilgi kur tfb1.cf1.…                    # köprü anahtarını bir kez kur (Slack botu da kurar)
 /bilgi alindi B-20261105-ayse-01 Cuma'ya bakıyorum
 /bilgi alindi B-20261105-ayse-01 --kisi mert   # yazanlar: yetkisi olmayanın alındısını onun adına
 /bilgi tercih                # bildirim kanalın ve çözülüp çözülmediği
@@ -225,10 +227,9 @@ ayrı yapılır.
 
 **Yazma yetkisi olmayanlar: köprü.** 6 Kas 2026'dan beri depoya yalnız `.kb.json`
 `yazanlar` listesindekiler ve kütüphaneci yazar. Diğer herkes köprü anahtarıyla Claude
-Code'dan `/paylas` der; köprü kaydı Drive gelen kutusuna bırakır, kütüphaneci dosyalar,
-girdiyi yazar ve konuya bağlar. Alındı da köprüden: `/bilgi alindi <girdi-id>`. Anahtar gelene kadar yedek
-yollar: Slack'teki TF Bilgi botu (`aldım <girdi-id>`) ya da depoya yazabilen biri
-(“alındı <girdi-id>”). Eklenti kişi adı vermez, "TF Bilgi sorumlusu" der.
+Code'dan `/paylas` der; Worker kaydı Drive gelen kutusuna bırakır, kütüphaneci dosyalar,
+girdiyi yazar ve konuya bağlar. Alındı Slack'teki TF Bilgi botuna `aldım <girdi-id>` yazılarak
+bildirilir. Belgeler alıcıya Slack'ten bağlantıyla gelir.
 
 **`/paylas` soru sormaz.** Tek istisna gizli paylaşımdır (Drive adımları, üç onay sorusu ve
 kart kalır); `/toplu-paylas` da tek onay tablosunu korur.
@@ -254,11 +255,9 @@ tablosu `gh` ile (yalnız okuma) PR'ların `claude-review` ve merge durumundan k
 aldığını TF Bilgi botuna `aldım <girdi-id>` yazarak (bot yanıt vermezse yazabilen birine
 “alındı <girdi-id>” ileterek) bildirir; `yazanlar`'daki biri gerekirse
 `/bilgi alindi <girdi-id> --kisi <alıcı>` ile onun adına kaydeder (onay dosyasında
-`kaydeden`; KB `dogrula` kaydedenin `yazanlar`'da olduğunu denetler). `haber: hemen`
-push'ta her alıcıya anlık mesaj gönderir (hafta içi 08:30–19:00, kişi başı günde en çok 3;
-dışında 08:30 özetinde); `haber: simdi` sessiz saati de deler. `tf_bilgi.py bildirim-plani`
-(yalnız okur) kime şimdi, kime özette, hangi kanaldan gideceğini ve kime hiçbir şey
-gitmeyeceğini adıyla söyler. Kanal tercihi (Slack, mail, WhatsApp; bir ya
+`kaydeden`; KB `dogrula` kaydedenin `yazanlar`'da olduğunu denetler). Alıcılı her girdi
+push'ta anında bildirilir (7/24; sessiz saat ve günlük sınır yok). `tf_bilgi.py bildirim-plani`
+(yalnız okur) kime hangi kanaldan gideceğini ve kime hiçbir şey gitmeyeceğini adıyla söyler. Kanal tercihi (Slack, mail, WhatsApp; bir ya
 da birden çok) KB ekip deposundaki "Bildirim tercihleri" issue'sunda `tercih: kanal=…`
 yorumuyla durur; `/bilgi tercih` okur ve yazar.
 
@@ -282,7 +281,7 @@ istenmedikçe "Gizli belge", en çok 40 karakter). Ortak drive'daki dosya için 
 oluşturulursa kayda kopyanın bağlantısı girer ve üç soru o bağlantı için yeniden sorulur. Kartta `gizli: evet · içerik depoya girmez · link: …`
 satırı çıkar. Oturumda dosyayı yoldan yükleyip paylaşabilen bir Google Drive
 connector'ı varsa eklenti bunu önerebilir; elle yol her zaman tek başına çalışır.
-Bildirim kuralları (hemen, kanal, sessiz saat, pilot) aynıdır; mesaj "<Gönderen> sana
+Bildirim kuralları (anında, kanal) aynıdır; mesaj "<Gönderen> sana
 gizli bir belge gönderdi" + Drive bağlantısı. `/bilgi` gizli girdiyi 🔒 ve bağlantıyla
 gösterir, özet göstermez; erişimi Drive verir. `/toplu-paylas`'ta gizli kip yoktur.
 Kurallar: KB `CLAUDE.md` §4.6.
@@ -305,10 +304,8 @@ yalnız yönetim deposunda (`eneskrblt/tf-bilgi-yonetim`) olur: `--yonetim` ya d
 diğerlerine ve köprüde "Yönetim yorumları yalnız yönetim deposuna erişimi olanlar içindir."
 denir. Yorum hiçbir zaman öbür alanın deposuna yazılmaz. KB'deki
 `bildirim.yml` yeni yorumda girdinin yazarına, alıcılarına ve önceki yorumculara bildirir
-(kanal, sessiz saat ve pilot aynı; günlük sınır ayrı: kişi başı günde 5 yorum bildirimi, acil
-istek bildirimlerinin hakkını yemez); sessiz saatte yazılan yorum ertesi iş günü 08:30 günlük
-mesajında çıkar. Kart bildirim için söz vermez: bildirimleri KB'deki Action gönderir, kapalıyken
-ya da pilotta gitmeyebilir.
+(kanal tercihi aynı; anında, 7/24). Kart bildirim için söz vermez: bildirimleri KB'deki Action
+gönderir, kapalıyken gitmeyebilir.
 
 `/toplu-paylas` bir klasörü (ör. claude.ai'den indirilmiş artifact'ler: her alt klasör
 bir öğe, `ekler/*.pdf` ayrı öğe, görseller varlık) ya da dosya listesini önce
@@ -334,7 +331,7 @@ deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kal�
 | `TF_BILGI_UZAK_EKIP`, `TF_BILGI_UZAK_YONETIM` | Depo adresi (GitHub `sahip/ad`, git adresi ya da test için yerel yol) | `Teamfluencer-Dev/tf-bilgi`, `eneskrblt/tf-bilgi-yonetim` |
 | `TF_BILGI_SURUM_KONTROLU` | `0` → güncel sürüm kontrolü kapalı | açık |
 | `TF_BILGI_YOL` | `kopru` ya da `dogrudan`: yolu zorlar | `/paylas`: yazan önce, sonra köprü; diğer komutlar: anahtar varsa köprü, yoksa doğrudan |
-| `TF_BILGI_KOPRU_URL` | Köprü adresini ezer (yalnız test; normalde adres anahtarın içindedir) | — |
+| `TF_BILGI_KOPRU_URL` | Köprü adresini ezer (ör. Worker başka bir adresten yayınlanırsa) | `cf1` anahtarı: `https://tf-bilgi-kopru.eneskarabulut.workers.dev`; eski anahtar: Apps Script dağıtımı |
 
 Önbellek klonunda commit'lenmemiş değişiklik varsa eklenti üzerine çekmez ve durur
 (ne yapılacağını yazar). Klonun `.kb.json` alanı beklenenle tutmazsa da durur.
@@ -373,8 +370,9 @@ indirilir (`~/.tf-bilgi/kopru/araclar/kb.py`) ve aynı pinle denetlenir.
 0.5.0 yalnız o hash'i taşır. 0.7.0 geçişi: hızlı yol ve raflar `kb.py`'si (Teamfluencer-Dev/tf-bilgi#6
 head `e59a23b`, #7'yi içerir; sha256 `c9fd7f6a…`, ekip ve yönetim kopyası aynı) eklendi; KB PR'ı merge
 edilene kadar 0.4.0 ve 0.6.0 hash'leri de geçer. Yönetim deposu org dışında, `eneskrblt/tf-bilgi-yonetim`'de
-(0.7.0). `/paylas`'ın hızlı yolu `kb.py`'ye hiç dokunmaz (klon yok); pin yalnız gizli
-paylaşım, `/toplu-paylas` ve `/bilgi` için geçerlidir.
+(0.7.0). 0.9.0: pin `c9fd7f6a…` (KB main) ve `fcbd94e2…` (bitiş tasarımı `kb.py`'si: `tfb1.cf1.` anahtarlarını da
+yakalar) taşır; 0.4.0 ve 0.6.0 hash'leri çıktı. `/paylas`'ın hızlı yolu `kb.py`'ye hiç dokunmaz (klon yok); pin yalnız
+gizli paylaşım, `/toplu-paylas` ve `/bilgi` için geçerlidir.
 
 ### Notlar
 

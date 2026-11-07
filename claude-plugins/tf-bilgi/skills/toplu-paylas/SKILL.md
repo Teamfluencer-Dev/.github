@@ -91,10 +91,11 @@ before step 4 (subagents read it too).
 
 2. **Prepare.** `TFB hazirla --yazma` (timeout 300000 ms). Exit 2 → relay the message
    as-is and stop before staging anything (only the repo's `.kb.json` `yazanlar` can push;
-   everyone else needs a köprü key from the TF Bilgi owner (`/bilgi kur`) and, until then,
-   sends documents to the TF Bilgi bot in Slack or to someone who can write to the repo,
-   which the message says; it also stops when it cannot tell who the user is). Keep `yol`,
-   `kok`, `kisi`, `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay
+   everyone else shares one by one with `/paylas` and a köprü key (write `anahtar` to the
+   bot; `/bilgi kur` also installs it), or sends documents to the TF Bilgi bot in Slack
+   or to someone who can write to the repo, which the message says; a Worker köprü key
+   (`tfb1.cf1.…`) has no bulk share; it also stops when it cannot tell who the user is).
+   Keep `yol`, `kok`, `kisi`, `uzak`, `baglanti_koku`, `bugun`, `takvim`, `gecici`, `damga`; relay
    `notlar` as one short line each. `yol: "kopru"` → yönetim is off for this run (the
    köprü carries only ekip items; say it in one line) and `kok` is the köprü mirror.
    Otherwise read `<kok>/kisiler.json`: when `kisiler[kisi].alanlar` contains `yonetim` and
@@ -172,10 +173,10 @@ before step 4 (subagents read it too).
      reason (erişim yok / üyeliğin yok / --yonetim-yok / köprüde yönetim yok).
    - Köprü path → header `Ekip → köprü (<n>; kütüphaneci bir sonraki turda dosyalar)`.
    - `ham` column: `var` · `var · kişisel veri` · `yok (<ham_neden>)`.
-   - With batch recipients: `Alıcılar (tüm öğeler): <adlar> · haber: <hemen | günlük>`, then
+   - With batch recipients: `Alıcılar (tüm öğeler): <adlar>`, then
      (doğrudan) `Bildirim: <satir>` from `TFB bildirim-plani [--yonetim] --tip BILGI --kimden <alicilar>
-     --yazar <kisi> [--haber hemen] --adet <number of items of that area>` (one line per
-     area that has items; read-only); (köprü) `Bildirim: kütüphaneci dosyalayınca`.
+     --yazar <kisi>` (one line per area that has items; read-only); (köprü) `Bildirim:
+     kütüphaneci dosyalayınca`.
    - Extra lines only when relevant: `İstekler: <no> <TIP> → <kişi1, kişi2> (<son_tarih|—>) · …`,
      `Yerine geçme: <no> → <onceki_surum no>`, `Doğrulayan boş: <no>, … (c-level'a giden
      karar/analiz)`, `Notlar: <no> <not>` (talimat benzeri metin, düşük güvenli konu …).
@@ -251,8 +252,8 @@ before step 4 (subagents read it too).
    in staging (yönetim off) → keep `<D>` and delete only `<D>-yonetim` if it exists. An
    area that failed keeps its staging.
 
-8. **Reply.** Köprü path: `Köprüden gönderildi: <n> öğe (kütüphaneci <dosyalama> turunda
-   dosyalar)` and one line per item `- <no> · <kod> · <baslik>`, then "Geri almak için:
+8. **Reply.** Köprü path: `Köprüden gönderildi: <n> öğe (kütüphaneci <dosyalama>
+   dosyalar)` (`dosyalama` as the helper's receipt words it) and one line per item `- <no> · <kod> · <baslik>`, then "Geri almak için:
    /paylas geri-al <kod>". Doğrudan path, per written area:
 
    ```
