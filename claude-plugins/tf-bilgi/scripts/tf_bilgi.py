@@ -2988,8 +2988,11 @@ def kopru_gonder(taslak, dosyalar, sinir, ek=None, parca_json=False):
             durum = f"kaydı durdurdum ({kod}), hiçbir şey dosyalanmayacak"
         except Stop:
             durum = f"kaydı durduramadım: gerekirse `/paylas geri-al {kod}` yaz"
-        hata_turu = KopruBelirsiz if bitir_gonderildi and not durduruldu else Stop  # meta.json yazılmış olabilir
-        raise hata_turu(f"Gönderim yarıda kaldı: {e} — {durum}. Tekrar dene.")
+        if bitir_gonderildi and not durduruldu:  # meta.json yazılmış olabilir: yeniden göndermek kopya açar
+            raise KopruBelirsiz(f"Gönderim yarıda kaldı: {e} — {durum}. Yeniden gönderme: alıcıya ulaşmış olabilir.")
+        yarim = Stop(f"Gönderim yarıda kaldı: {e} — {durum}. Tekrar dene.")
+        yarim.neden = str(e)  # GitHub yedeğinin notu yalnız nedeni söyler
+        raise yarim
     return kod, bas, bit, ozetler
 
 
@@ -3774,7 +3777,8 @@ def hizli(argv):
             raise  # kayıt tamamlanmış olabilir: ikinci kayıt açılmaz
         except Stop as hata:
             yol, login, slug, onbellekten = hizli_yedek_yol(alan, hata, kaynaklar)
-            notlar.append(f"Köprüden gitmedi ({tek_satir(str(hata), 200)}); GitHub yolundan gitti (alıcıya ~1 dakikada ulaşır).")
+            neden = tek_satir(getattr(hata, "neden", str(hata)), 200)
+            notlar.append(f"Köprüden gitmedi ({neden}); GitHub yolundan gitti (alıcıya ~1 dakikada ulaşır).")
     if yol == "writer":
         boyut_denetle(kaynaklar, HIZLI_DOSYA_AZAMI, HIZLI_KAYIT_AZAMI)  # GitHub blob API
         kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar)

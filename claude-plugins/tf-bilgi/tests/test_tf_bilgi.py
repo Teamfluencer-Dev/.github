@@ -3109,6 +3109,7 @@ class HizliTest(Base):
             r = self.hizli(not_metni="Ayşe'ye parça denemesi notu")
         self.assertEqual(r["yol"], "writer")
         self.assertEqual((len(worker.islemler("geri-al")), worker.islemler("bitir")), (1, []))
+        self.assertTrue(any("Parça reddedildi" in n and "Tekrar dene" not in n for n in r["notlar"]), r["notlar"])
         self.assertEqual(len(self.gh.mesajlar(self.EKIP)), 2)
 
     def test_bitir_kesin_reddedilirse_kayit_durur_github_yolu_calisir(self):
@@ -3134,6 +3135,8 @@ class HizliTest(Base):
         self.assertTrue(all(k["bitti"] for k in worker.kayitlar.values()))
         self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])  # GitHub'a ikinci kayıt gitmedi
         self.assertIn("/paylas geri-al", out)  # iptal kodu kullanıcıya söylendi
+        self.assertIn("Yeniden gönderme", out)
+        self.assertNotIn("Tekrar dene", out)
 
     def test_tf_bilgi_yol_kopru_yedegi_kapatir(self):
         worker = self._cf_worker()
