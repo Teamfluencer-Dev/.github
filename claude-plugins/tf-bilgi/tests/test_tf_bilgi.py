@@ -3071,6 +3071,23 @@ class HizliTest(Base):
             self.assertIn("TF_BILGI_YOL anlaşılmadı", self.stop("hizli", stdin="x"))
         self.assertEqual(len(kopru.islemler("baslat")), 1)
 
+    def test_worker_anahtari_olan_yazan_kopruden_gider_olmazsa_github_yolu(self):
+        (self.cache).mkdir(parents=True, exist_ok=True)
+        (self.cache / "anahtar").write_text(KOPRU_CF_ANAHTAR + "\n")
+        worker = SahteWorker()
+        with mock.patch.object(tf_bilgi, "kopru_tasi", worker), mock.patch.object(tf_bilgi, "kopru_ham_tasi", worker.ham), \
+                mock.patch.object(tf_bilgi, "KOPRU_BEKLE", 0):
+            r = self.hizli(not_metni="Ayşe'ye bilgi notu burada")
+            self.assertEqual((r["yol"], r["notlar"]), ("kopru", []))  # saniyelik yol
+            self.assertEqual(len(worker.islemler("bitir")), 1)
+            worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+            r = self.hizli(not_metni="yine gönderiyorum buradan")
+            self.assertEqual(r["yol"], "writer")
+            self.assertTrue(any("GitHub yolundan" in n for n in r["notlar"]), r["notlar"])
+            os.environ["TF_BILGI_YOL"] = "dogrudan"
+            self.assertEqual(self.hizli(not_metni="depodan gitsin bu sefer")["yol"], "writer")
+            self.addCleanup(os.environ.pop, "TF_BILGI_YOL", None)
+
     def test_geri_al_dosyalanmamis_kaydi_siler(self):
         r = self.hizli("--ek", self.ek("a.md", "a"), not_metni="geri alacağım")
         kod = r["kod"]

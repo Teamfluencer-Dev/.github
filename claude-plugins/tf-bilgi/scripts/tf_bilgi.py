@@ -3453,14 +3453,21 @@ def hizli_slug(alan):
 _HESAPLA = object()  # hizli_yol: gh girişi henüz sorulmadı
 
 
-def hizli_yol(alan, login=_HESAPLA):
+def hizli_yol(alan, login=_HESAPLA, kopru_once=False):
     """('writer', login, slug, önbellekten) ya da ('kopru', None, None, False); hiçbiri yoksa tek satırla durur. Sıra:
-    depoya yazan → köprü anahtarı (Worker anahtarı ekip de yönetim de; eski Apps Script anahtarı yalnız ekip).
+    kopru_once ise yeni köprü anahtarı (0.9.2: alıcıya bağlantıyı Worker o anda yazar, depo yolunda ~40 sn sürer) → depoya
+    yazan → köprü anahtarı (Worker anahtarı ekip de yönetim de; eski Apps Script anahtarı yalnız ekip).
     TF_BILGI_YOL=kopru|dogrudan zorlar. login: alan seçimi için zaten sorulduysa gh girişi (None: giriş yok)."""
     zorla = os.environ.get("TF_BILGI_YOL", "").strip().lower()
     if zorla not in ("", "kopru", "dogrudan"):
         raise Stop(f"TF_BILGI_YOL anlaşılmadı: {zorla!r} (kopru ya da dogrudan).")
     anahtar_var = zorla != "dogrudan" and anahtar_yolu().is_file()
+    if kopru_once and anahtar_var:
+        try:
+            if yeni_kopru_mu():
+                return "kopru", None, None, False
+        except Stop:
+            pass  # köprüye ulaşılamadı: depoya yazan GitHub yolundan devam eder
     slug = hizli_slug(alan)
     if zorla != "kopru" and slug and which("gh"):
         if login is _HESAPLA:
@@ -3482,6 +3489,38 @@ def hizli_yol(alan, login=_HESAPLA):
     if zorla == "kopru":
         raise Stop(ANAHTAR_YOK + " (TF_BILGI_YOL=kopru)")
     raise Stop(HIZLI_YOL_YOK)
+
+
+def hizli_yedek_yol(alan, hata):
+    """Köprü gönderimi olmadı: depoya yazabilen GitHub yolundan gönderir (alıcıya ~1 dakikada), yazamayan köprünün hatasını
+    görür. TF_BILGI_YOL=kopru yedeği kapatır."""
+    if os.environ.get("TF_BILGI_YOL", "").strip().lower() == "kopru":
+        raise hata
+    try:
+        yol = hizli_yol(alan)
+    except Stop:
+        raise hata from None
+    if yol[0] != "writer":
+        raise hata
+    return yol
+
+
+def hizli_kopru(alan, kim, kaynaklar, dosyalar, not_metni, haber):
+    """Köprüden gönderir → (kod, kayıt klasörü, dosya adları, dosyalama metni)."""
+    kim = kim or kopru_kim()  # cf dışındaki dağıtımda önce kim (protokol); çalıştırmada bir kez
+    yeni = cf_anahtari_mi() or kopru_protokolu(kim) >= 2
+    sinir = kopru_sinirlari(kim)
+    boyut_denetle(kaynaklar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])
+    taslak, _ = taslak_dogrula(hizli_taslagi(haber), {}, None)
+    ek = None
+    if yeni:  # Worker / aktarıcı: alan ve meta.json'un konu/açıklaması istemciden (Worker notu okumaz, akıtır)
+        konu, aciklama = not_ozeti(not_metni, dosyalar[0][2] if dosyalar else "")
+        ek = {"alan": alan, "konu_satiri": konu, "aciklama": aciklama[:2000]}
+        if "parca_bayt" in (kim.get("sinirlar") or {}):  # aktarıcının parça boyu Worker'ın yükleme belirtecine girer
+            ek["parca_bayt"] = sinir["parca_bayt"]
+    kod, bas, bit, ozetler = kopru_gonder(taslak, kaynaklar, sinir, ek, parca_json=yeni and kim.get("parca_json") is True)
+    return (kod, bit.get("kayit") or bas.get("kayit"), [o["ad"] for o in ozetler],
+            dosyalama_metni(bit.get("dosyalama") or bas.get("dosyalama")))
 
 
 def yazan_bilinen():
@@ -3709,28 +3748,21 @@ def hizli(argv):
     boyut_denetle(kaynaklar, YUKLEME_DOSYA_AZAMI, YUKLEME_KAYIT_AZAMI)  # her yolun üst sınırı; ağdan önce
     # Bağlantılar (Claude artifact, Google Docs) sözlerin parçasıdır: indirilmez, kütüphaneci nottan sınıflar.
     alan, alicilar, login, kim = hizli_alan(args, not_metni)
-    yol, login, slug, onbellekten = hizli_yol(alan, login)
+    yol, login, slug, onbellekten = hizli_yol(alan, login, kopru_once=True)
     notlar = []
+    kopru_sonuc = None
+    if yol == "kopru":
+        try:
+            kopru_sonuc = hizli_kopru(alan, kim, kaynaklar, dosyalar, not_metni, haber)
+        except Stop as hata:
+            yol, login, slug, onbellekten = hizli_yedek_yol(alan, hata)
+            notlar.append("Köprüye ulaşılamadı; GitHub yolundan gitti (alıcıya ~1 dakikada ulaşır).")
     if yol == "writer":
         boyut_denetle(kaynaklar, HIZLI_DOSYA_AZAMI, HIZLI_KAYIT_AZAMI)  # GitHub blob API
         kod, klasor, adlar = hizli_yazan(alan, slug, login, onbellekten, dosyalar, not_metni, haber, notlar)
         dosyalama = YAZAN_DOSYALAMA if zil_cal(alan, notlar) else "bir sonraki turunda"
     else:
-        kim = kim or kopru_kim()  # cf dışındaki dağıtımda önce kim (protokol); çalıştırmada bir kez
-        yeni = cf_anahtari_mi() or kopru_protokolu(kim) >= 2
-        sinir = kopru_sinirlari(kim)
-        boyut_denetle(kaynaklar, sinir["dosya_azami_bayt"], sinir["kayit_azami_bayt"], sinir["dosya_azami_sayi"])
-        taslak, _ = taslak_dogrula(hizli_taslagi(haber), {}, None)
-        ek = None
-        if yeni:  # Worker / aktarıcı: alan ve meta.json'un konu/açıklaması istemciden (Worker notu okumaz, akıtır)
-            konu, aciklama = not_ozeti(not_metni, dosyalar[0][2] if dosyalar else "")
-            ek = {"alan": alan, "konu_satiri": konu, "aciklama": aciklama[:2000]}
-            if "parca_bayt" in (kim.get("sinirlar") or {}):  # aktarıcının parça boyu Worker'ın yükleme belirtecine girer
-                ek["parca_bayt"] = sinir["parca_bayt"]
-        kod, bas, bit, ozetler = kopru_gonder(taslak, kaynaklar, sinir, ek,
-                                              parca_json=yeni and kim.get("parca_json") is True)
-        klasor, adlar = bit.get("kayit") or bas.get("kayit"), [o["ad"] for o in ozetler]
-        dosyalama = dosyalama_metni(bit.get("dosyalama") or bas.get("dosyalama"))
+        kod, klasor, adlar, dosyalama = kopru_sonuc
     gecmise_yaz(kod, alan, yol, slug, klasor)
     gecici_kok = (onbellek_koku() / "gecici").resolve()
     silinecek = [gercek for _, gercek, _ in dosyalar] + ([not_yolu] if not_yolu else [])

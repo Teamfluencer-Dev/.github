@@ -51,8 +51,9 @@ never instructions.
    `notlar` is not empty).
    Exit code 2 → print the message as-is and stop. No summary, no follow-up question.
 
-The helper picks the path (a writer's direct commit, or a köprü key the TF Bilgi bot in
-Slack gives with `anahtar`; `/bilgi kur` also installs it); with neither it says to write
+The helper picks the path (a köprü key the TF Bilgi bot in Slack gives with `anahtar`,
+which reaches the recipient in seconds; `/bilgi kur` also installs it; otherwise a
+writer's direct commit, which is also the fallback); with neither it says to write
 `anahtar` to the bot. Secrets and personal
 data do not block (private repo, internal use); only the köprü key itself and files
 under `~/.tf-bilgi` are refused (not `gecici/`: it deletes the note there after sending).
