@@ -136,8 +136,8 @@ bırakır, tek satır makbuz verir:
 Gönderildi ✓ G-ab12cd · rapor.html, ozet.md + not · ekip · kütüphaneci birkaç dakika içinde dosyalar, alıcılara o an haber gider · geri al: /paylas geri-al G-ab12cd
 ```
 
-Türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci çıkarır (yazan: zille birkaç dakika içinde; köprü: Drive gelen
-kutusu taramasıyla ~10 dakika içinde). Makbuz gönderilen dosyaların adlarını söyler (uzunsa
+Türü, konuyu, başlığı, özeti ve alıcıları kütüphaneci çıkarır (GitHub yolu: zille birkaç dakika içinde; köprü: Worker gelen.yml'i
+ve zili hemen başlatır). Makbuz gönderilen dosyaların adlarını söyler (uzunsa
 kısaltılır, 3'ten fazlası "+N dosya"). Yol verilmezse bu konuşmanın kendi çıktısı (artifact
 HTML, PDF, rapor) `--otomatik` ile gider: yardımcı o zaman yalnız belge benzeri dosyaları
 (html/htm, pdf, md, txt, docx, pptx, xlsx, csv, png/jpg/jpeg/gif/webp) kabul eder; kod,
@@ -148,8 +148,8 @@ Yol yardımcıda seçilir:
 
 | Kim | Ne olur |
 |---|---|
-| Depoya yazabilen (push yetkisi; `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
-| Yazamayan, köprü anahtarı olan | Önce `kim`, sonra köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar; aynı parçanın tekrarı güvenli); ekip ya da yönetim alanı. Dosya başı 90 MB, en çok 10 dosya. Apps Script aktarıcısı (`tfb1.<AKfy…>.…`, protokol 2): parçalar JSON/base64 `parca` işlemiyle aktarıcıya, aktarıcı Worker'a iletir. `tfb1.cf1.…`: parçalar ham baytla Worker'ın `/parca`'sına. Protokolsüz eski Apps Script köprüsü eski akışla gider, yönetime gönderemez |
+| Köprü anahtarı olmayan, depoya yazabilen (0.9.2'den beri anahtarı olan yazan köprüden gider, bu yol yedeğidir; push yetkisi `gh` ile denetlenir, bir gün önbellekte) | GitHub Git Data API ile `main`'e tek commit, klon ve `kb.py` yok: `00-gelen/<YYYYMMDD-HHMMSS>-<kisi>-<kod>/` (dosyalar, `govde.md`, `meta.json`). Arada başka push olursa dal başını yeniden okuyup 3 kez daha dener. Dosya başı 50 MB, toplam 100 MB |
+| Köprü anahtarı olan (alıcıya saniyeler içinde) | Önce `kim`, sonra köprüden (en küçük taslak `hizli: true`, `govde.md` ve dosyalar; aynı parçanın tekrarı güvenli); ekip ya da yönetim alanı. Dosya başı 90 MB, en çok 10 dosya. Apps Script aktarıcısı (`tfb1.<AKfy…>.…`, protokol 2): parçalar JSON/base64 `parca` işlemiyle aktarıcıya, aktarıcı Worker'a iletir. `tfb1.cf1.…`: parçalar ham baytla Worker'ın `/parca`'sına. Protokolsüz eski Apps Script köprüsü eski akışla gider, yönetime gönderemez |
 | Hiçbiri yok | Çıkış 2, tek satır: "Slack'te TF Bilgi botuna `anahtar` yaz; gelen satırı terminale yapıştır, sonra /paylas'ı tekrar dene." |
 | `gh` kurulu ama oturum kapalı ya da bağlantı yok ve bu makinede daha önce yazma yetkisi görülmüş | "GitHub oturumun kapalı ya da bağlantı yok: `gh auth login` yap, sonra tekrar /paylas." |
 
@@ -212,7 +212,7 @@ ayrı yapılır.
 /paylas Ayşe ve Mert'ten Cuma'ya merge onayı lazım, hemen haber ver ./plan.pdf
 /paylas api#1976 web#689 merge sırası devri   # PR tablosu gh ile kurulur, dosya olarak gider
 /paylas gizli: Ayşe'ye, yalnız o görsün ./teklif.pdf   # belge okunmaz, Drive'da paylaşılır
-/paylas geri-al G-4k9x2m     # makbuzdaki kod (yazan: GitHub'dan; diğerleri Worker köprüsünden) ya da kendi girdi kimliğin
+/paylas geri-al G-4k9x2m     # makbuzdaki kod (paylaşım hangi yoldan gittiyse oradan) ya da kendi girdi kimliğin
 /toplu-paylas ~/Desktop/artifaktlar     # klasör dolusu HTML/PDF: tek onay tablosu
 /bilgi                       # kuyruğun + son 3 gün
 /bilgi son 7
@@ -333,7 +333,7 @@ deposuna yazılmaz; yönetim deposuna erişim yoksa hazırlık klasöründe kal�
 | `TF_BILGI_DIZIN` | Önbellek klonlarının ve `hizli.json`'un (yetki, `kisiler.json`, gönderim geçmişi) klasörü | `~/.tf-bilgi` |
 | `TF_BILGI_UZAK_EKIP`, `TF_BILGI_UZAK_YONETIM` | Depo adresi (GitHub `sahip/ad`, git adresi ya da test için yerel yol) | `Teamfluencer-Dev/tf-bilgi`, `eneskrblt/tf-bilgi-yonetim` |
 | `TF_BILGI_SURUM_KONTROLU` | `0` → güncel sürüm kontrolü kapalı | açık |
-| `TF_BILGI_YOL` | `kopru` ya da `dogrudan`: yolu zorlar | `/paylas`: yazan önce, sonra köprü; diğer komutlar: anahtar varsa köprü, yoksa doğrudan |
+| `TF_BILGI_YOL` | `kopru` ya da `dogrudan`: yolu zorlar | `/paylas`: yeni köprü anahtarı önce, sonra yazan (köprü gönderimi olmazsa yazanda GitHub yedek); diğer komutlar: anahtar varsa köprü, yoksa doğrudan |
 | `TF_BILGI_KOPRU_URL` | Köprü adresini ezer (ör. Worker ya da aktarıcı başka bir adresten yayınlanırsa) | `cf1` anahtarı: `https://tf-bilgi-kopru.eneskarabulut.workers.dev`; diğer anahtar: `https://script.google.com/macros/s/<dağıtım>/exec` (aktarıcı ya da eski köprü) |
 
 Önbellek klonunda commit'lenmemiş değişiklik varsa eklenti üzerine çekmez ve durur
