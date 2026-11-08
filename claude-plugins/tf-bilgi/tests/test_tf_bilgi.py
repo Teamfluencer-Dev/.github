@@ -3071,6 +3071,111 @@ class HizliTest(Base):
             self.assertIn("TF_BILGI_YOL anlaşılmadı", self.stop("hizli", stdin="x"))
         self.assertEqual(len(kopru.islemler("baslat")), 1)
 
+    def _cf_worker(self):
+        self.cache.mkdir(parents=True, exist_ok=True)
+        (self.cache / "anahtar").write_text(KOPRU_CF_ANAHTAR + "\n")
+        return SahteWorker()
+
+    @staticmethod
+    def _kopru(worker, tasi=None):
+        return mock.patch.multiple(tf_bilgi, kopru_tasi=tasi or worker, kopru_ham_tasi=worker.ham, KOPRU_BEKLE=0)
+
+    def test_worker_anahtari_olan_yazan_kopruden_gider_olmazsa_github_yolu(self):
+        worker = self._cf_worker()
+        self.addCleanup(os.environ.pop, "TF_BILGI_YOL", None)
+        with self._kopru(worker):
+            r = self.hizli(not_metni="Ayşe'ye bilgi notu burada")
+            self.assertEqual((r["yol"], r["notlar"]), ("kopru", []))  # saniyelik yol
+            self.assertEqual(len(worker.islemler("bitir")), 1)
+            self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])  # GitHub'a yazılmadı, zil Worker'da
+            self.assertEqual(self.zil_cagrilari(), [])
+            self.assertEqual(json.loads((self.cache / "hizli.json").read_text())["gonderilen"][r["kod"]]["yol"], "kopru")
+            worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+            r = self.hizli(not_metni="yine gönderiyorum buradan")
+            self.assertEqual(r["yol"], "writer")
+            self.assertTrue(any("GitHub yolundan" in n and "Köprü kapalı" in n for n in r["notlar"]), r["notlar"])
+            self.assertTrue(self.kayit(self.EKIP, r["kod"]))  # kayıt tek
+            self.assertEqual(len(worker.islemler("bitir")), 1)
+            sayi = len(worker.islemler("baslat"))
+            os.environ["TF_BILGI_YOL"] = "dogrudan"
+            r = self.hizli(not_metni="depodan gitsin bu sefer")
+            self.assertEqual((r["yol"], r["notlar"]), ("writer", []))
+            self.assertEqual(len(worker.islemler("baslat")), sayi)  # köprüye hiç sorulmadı
+
+    def test_parca_reddedilirse_geri_alinir_github_yolundan_tek_kayit(self):
+        worker = self._cf_worker()
+        worker.parca_red[("govde.md", 0)] = ("Parça reddedildi", "istek")
+        with self._kopru(worker):
+            r = self.hizli(not_metni="Ayşe'ye parça denemesi notu")
+        self.assertEqual(r["yol"], "writer")
+        self.assertEqual((len(worker.islemler("geri-al")), worker.islemler("bitir")), (1, []))
+        self.assertTrue(any("Parça reddedildi" in n and "Tekrar dene" not in n for n in r["notlar"]), r["notlar"])
+        self.assertEqual(len(self.gh.mesajlar(self.EKIP)), 2)
+
+    def test_bitir_kesin_reddedilirse_kayit_durur_github_yolu_calisir(self):
+        worker = self._cf_worker()
+        worker.hatalar["bitir"] = ("Dosya Drive'da eksik", "durum")
+        with self._kopru(worker):
+            r = self.hizli(not_metni="Ayşe'ye bitir denemesi notu")
+        self.assertEqual(r["yol"], "writer")
+        self.assertEqual(len(self.gh.mesajlar(self.EKIP)), 2)
+
+    def test_bitir_yaniti_kaybolursa_ikinci_kayit_olusmaz(self):
+        worker = self._cf_worker()
+
+        def yanit_kaybolur(adres, veri, zaman_asimi):
+            islem = json.loads(veri.decode("utf-8"))["islem"]
+            yanit = worker(adres, veri, zaman_asimi)  # Worker işlemi tamamlar
+            if islem in ("bitir", "geri-al"):  # yanıt istemciye ulaşmaz
+                raise tf_bilgi.urllib.error.URLError("bağlantı koptu")
+            return yanit
+
+        with self._kopru(worker, yanit_kaybolur):
+            out = self.stop("hizli", stdin="Mert'e bilgi notu\n")
+        self.assertTrue(all(k["bitti"] for k in worker.kayitlar.values()))
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])  # GitHub'a ikinci kayıt gitmedi
+        self.assertIn("/paylas geri-al", out)  # iptal kodu kullanıcıya söylendi
+        self.assertIn("Yeniden gönderme", out)
+        self.assertNotIn("Tekrar dene", out)
+
+    def test_tf_bilgi_yol_kopru_yedegi_kapatir(self):
+        worker = self._cf_worker()
+        worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+        os.environ["TF_BILGI_YOL"] = "kopru"
+        self.addCleanup(os.environ.pop, "TF_BILGI_YOL", None)
+        with self._kopru(worker):
+            self.assertIn("Köprü kapalı", self.stop("hizli", stdin="köprüye zorlanmış not burada"))
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
+
+    def test_yazamayan_anahtar_sahibi_kopru_hatasini_gorur(self):
+        os.environ["FAKE_GH_PUSH"] = "false"
+        worker = self._cf_worker()
+        worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+        with self._kopru(worker):
+            self.assertIn("Köprü kapalı", self.stop("hizli", stdin="yazamayan kişinin notu burada"))
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
+
+    def test_github_sinirina_sigmayan_dosyada_kopru_hatasi_soylenir(self):
+        worker = self._cf_worker()
+        worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+        with self._kopru(worker), mock.patch.object(tf_bilgi, "HIZLI_DOSYA_AZAMI", 1):
+            cikti = self.stop("hizli", stdin="büyük dosya denemesi notu")
+        self.assertIn("Köprü kapalı", cikti)
+        self.assertEqual(self.gh.mesajlar(self.EKIP), ["tohum"])
+
+    def test_yonetim_yazan_anahtarla_kopruden_olmazsa_yonetim_deposuna(self):
+        worker = self._cf_worker()
+        with self._kopru(worker):
+            r = self.hizli("--yonetim", not_metni="yönetim için bir not burada")
+            self.assertEqual((r["yol"], r["alan"]), ("kopru", "yonetim"))
+            self.assertEqual(worker.islemler("baslat")[0]["alan"], "yonetim")
+            self.assertEqual(self.gh.mesajlar(self.YONETIM), ["tohum"])
+            worker.hatalar["baslat"] = ("Köprü kapalı", "istek")
+            r = self.hizli("--yonetim", not_metni="yönetim için ikinci not burada")
+        self.assertEqual((r["yol"], r["alan"]), ("writer", "yonetim"))
+        self.assertTrue(self.kayit(self.YONETIM, r["kod"]))
+        self.assertTrue(any("/10/labels" in c[1] for c in self.zil_cagrilari()), self.zil_cagrilari())
+
     def test_geri_al_dosyalanmamis_kaydi_siler(self):
         r = self.hizli("--ek", self.ek("a.md", "a"), not_metni="geri alacağım")
         kod = r["kod"]
@@ -3753,6 +3858,19 @@ class AktariciKopruTest(WorkerKopruTest):
     test_anahtar_bicimi_ve_adres = test_paylas_ham_parcalar_ve_makbuz = test_parca_yeniden_denenir_kalici_hata_geri_alir = None
     test_kopru_url_ezer_ve_ayar_hatasi_aynen = test_kur_cf1_anahtari = test_okuma_desteklenmiyor_sade_cumle = None
     test_parca_http_hatasi_mesaji = None  # aktarıcıya ham parça gitmez
+
+    def test_yazan_aktarici_anahtariyla_kopruden_kim_olmazsa_github(self):
+        os.environ["FAKE_GH_LOGIN"] = "ayse-gh"
+        self.worker.ben = "ayse"
+        r = self.ok("hizli", stdin="Mert'e aktarıcıdan not burada\n")
+        self.assertEqual(r["yol"], "kopru")
+        self.assertEqual(len(self.worker.islemler("kim")), 1)
+        self.assertEqual(len(self.worker.islemler("bitir")), 1)
+        self.worker.hatalar["kim"] = ("Köprü kapalı", "drive")
+        r = self.ok("hizli", stdin="Mert'e ikinci not burada\n")
+        self.assertEqual(r["yol"], "writer")
+        self.assertEqual(len(self.worker.islemler("kim")), 2)  # çalıştırma başına bir
+        self.assertEqual(len(self.worker.islemler("bitir")), 1)
 
     def test_aktarici_json_parcalar_uc_uca(self):
         buyuk = bytes(range(256)) * (3 * 4096 + 17)  # 3 MB'tan büyük: 2 parça
