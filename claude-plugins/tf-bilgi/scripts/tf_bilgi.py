@@ -3466,8 +3466,8 @@ def hizli_yol(alan, login=_HESAPLA, kopru_once=False):
         try:
             if yeni_kopru_mu():
                 return "kopru", None, None, False
-        except Stop:
-            pass  # köprüye ulaşılamadı: depoya yazan GitHub yolundan devam eder
+        except Exception:  # yalnız yol seçimi yoklaması: köprüye ulaşılamadıysa depoya yazan GitHub yolundan devam eder
+            pass
     slug = hizli_slug(alan)
     if zorla != "kopru" and slug and which("gh"):
         if login is _HESAPLA:
