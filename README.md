@@ -407,6 +407,38 @@ shared action `actions/coverage-summary`:
 
 Tests: `python3 -m unittest discover -s actions/coverage-summary`.
 
+## SSH to the servers from a workflow (`ssh-gate`)
+
+SSH (port 22) on the Hetzner servers is open only to the IPs on the admin panel's
+SSH whitelist (TA-2252). GitHub-hosted runners change IP on every run, so a job
+that SSHes into a server opens the port for itself first:
+
+```yaml
+- name: Open SSH for this runner
+  uses: Teamfluencer-Dev/.github/actions/ssh-gate@main
+  with:
+    hcloud-token: ${{ secrets.HETZNER_API_TOKEN }}
+    hosts: ${{ env.BLUE_HOST }},${{ env.GREEN_HOST }}
+```
+
+Put it before the first `ssh-keyscan` / `ssh` / `rsync` of the job; every job
+that SSHes needs its own step (each job runs on a different runner).
+
+- The step creates a temporary Hetzner firewall (label `purpose=gh-ssh-gate`)
+  that allows TCP 22 only from the runner's IPv4 and applies it to the listed
+  servers. The post step detaches and deletes it, also when the job fails or is
+  cancelled. It never writes to the permanent whitelist, so parallel deploys and
+  admin edits cannot remove each other's IPs.
+- A server without any Hetzner firewall is skipped with a warning: applying a
+  firewall there would block every other inbound port.
+- A server takes at most 5 firewalls; when they are all in use the step retries
+  for `wait-seconds` (default 300). A firewall left behind by a killed runner is
+  deleted by a later run once its `ttl-minutes` (default 120) pass.
+- `hosts` takes public IPv4s or Hetzner server names; an unknown host fails the
+  step.
+
+Tests: `node --test actions/ssh-gate/lib.test.js`.
+
 ## No GitHub-side PR review
 
 The API-billed CI review is gone: the reusable `claude-review.yml` workflow was
