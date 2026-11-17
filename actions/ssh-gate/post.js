@@ -1,14 +1,29 @@
 "use strict"
-const { createClient, input, log, removeGate, warn } = require("./lib")
+const lib = require("./lib")
 
-const run = async () => {
-  const firewallId = (process.env.STATE_firewall_id || "").trim()
-  if (!firewallId) {
-    return
+/** Main adımının kurduğu bütün geçici firewall'ları siler; silinemeyenlerin id'lerini döner. */
+const run = async ({ env = process.env, client: injectedClient = null, sleep = lib.sleep } = {}) => {
+  const ids = lib.parseIdList(env.STATE_firewall_ids)
+  if (ids.length === 0) {
+    return []
   }
-  const removed = await removeGate(createClient(input("hcloud-token", { required: true })), firewallId)
-  log(removed ? `Geçici SSH firewall'u kaldırıldı (${firewallId}).` : `Geçici SSH firewall'u zaten yok (${firewallId}).`)
+  const client = injectedClient || lib.createClient(lib.input("hcloud-token", { required: true }, env))
+  const failed = []
+  for (const id of ids) {
+    try {
+      const removed = await lib.removeGate(client, id, { sleepFn: sleep })
+      lib.log(removed ? `Geçici SSH firewall'u kaldırıldı (${id}).` : `Geçici SSH firewall'u zaten yok (${id}).`)
+    } catch (error) {
+      failed.push(id)
+      // Temizlik hatası işi düşürmez: firewall'un süresi dolunca sonraki deploy onu siler.
+      lib.warn(`Geçici SSH firewall'u ${id} kaldırılamadı: ${error.message}. Süresi dolunca sonraki deploy siler.`)
+    }
+  }
+  return failed
 }
 
-// Temizlik hatası işi düşürmez: firewall'un süresi dolunca sonraki deploy onu siler.
-run().catch((error) => warn(`Geçici SSH firewall'u kaldırılamadı: ${error.message}`))
+module.exports = { run }
+
+if (require.main === module) {
+  run().catch((error) => lib.warn(`Geçici SSH firewall temizliği atlandı: ${error.message}`))
+}

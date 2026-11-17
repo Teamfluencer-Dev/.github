@@ -14,6 +14,7 @@ const net = require("net")
 
 const API = "https://api.hetzner.cloud/v1"
 const PURPOSE = "gh-ssh-gate"
+const GATE_SELECTOR = `/firewalls?label_selector=${encodeURIComponent(`purpose=${PURPOSE}`)}&per_page=50`
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 const IP_SERVICES = ["https://api.ipify.org", "https://checkip.amazonaws.com", "https://ipv4.icanhazip.com"]
 
@@ -23,20 +24,41 @@ const log = (message) => console.log(message)
 const warn = (message) => console.log(`::warning::${message}`)
 
 /** Action input'u: `INPUT_<AD>` (tire korunur, büyük harf). */
-const input = (name, { required = false, fallback = "" } = {}) => {
-  const value = (process.env[`INPUT_${name.toUpperCase()}`] || "").trim()
+const input = (name, { required = false, fallback = "" } = {}, env = process.env) => {
+  const value = (env[`INPUT_${name.toUpperCase()}`] || "").trim()
   if (!value && required) {
     throw new Error(`Gerekli input yok: ${name}`)
   }
   return value || fallback
 }
 
-/** Post adımı STATE_<ad> ortam değişkeninden okur. */
-const saveState = (name, value) => {
-  if (process.env.GITHUB_STATE) {
-    fs.appendFileSync(process.env.GITHUB_STATE, `${name}=${value}\n`)
+/** Tam sayı input'u; sayı değilse ya da aralık dışındaysa açık bir hatayla durur. */
+const parseIntInput = (name, raw, { min, max }) => {
+  const text = String(raw).trim()
+  const value = /^\d+$/.test(text) ? Number(text) : NaN
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} ${min}–${max} arasında bir tam sayı olmalı (gelen: "${text}")`)
   }
+  return value
 }
+
+const parseIdList = (raw) =>
+  String(raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s))
+
+/**
+ * Post adımının sileceği firewall id'leri `STATE_firewall_ids` olarak saklanır. Aynı ad için
+ * son yazılan değer geçerlidir; liste her değişiklikte tamamıyla yazılır.
+ */
+const stateWriter = (env = process.env) => ({
+  save: (ids) => {
+    if (env.GITHUB_STATE) {
+      fs.appendFileSync(env.GITHUB_STATE, `firewall_ids=${ids.join(",")}\n`)
+    }
+  },
+})
 
 const isIpv4 = (value) => {
   const match = IPV4_RE.exec(value)
@@ -54,11 +76,22 @@ class HcloudError extends Error {
 const createClient = (token, { fetchImpl = fetch, sleepFn = sleep } = {}) => {
   const request = async (method, path, body) => {
     for (let attempt = 1; ; attempt += 1) {
-      const response = await fetchImpl(`${API}${path}`, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      })
+      let response
+      try {
+        response = await fetchImpl(`${API}${path}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+      } catch (error) {
+        // Ağ hatası: istek Hetzner'e ulaşmış olabilir. POST tekrarı aynı adla 409 alır; main.js
+        // o durumda firewall'u adıyla bulup temizler.
+        if (attempt < 4) {
+          await sleepFn(2000 * attempt)
+          continue
+        }
+        throw new HcloudError(0, "network", error.message)
+      }
       if (response.status === 204) {
         return {}
       }
@@ -85,10 +118,12 @@ const createClient = (token, { fetchImpl = fetch, sleepFn = sleep } = {}) => {
   }
 }
 
-/** Sunucu limiti, kilit ve hız sınırı gibi geçici hatalar beklenip tekrar denenir. */
+/** Sunucu limiti, kilit, ad çakışması, hız sınırı ve ağ hataları beklenip tekrar denenir. */
 const isRetryable = (error) =>
   error instanceof HcloudError &&
-  ([409, 423, 429].includes(error.status) || error.status >= 500 || /limit|conflict|locked|timeout/.test(error.code))
+  ([0, 409, 423, 429].includes(error.status) ||
+    error.status >= 500 ||
+    /limit|conflict|locked|timeout|uniqueness|network/.test(error.code))
 
 const parseHosts = (raw) => [...new Set(String(raw).split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))]
 
@@ -101,6 +136,11 @@ const listServers = async (client) => {
   }
   return servers
 }
+
+const listGateFirewalls = async (client) => (await client.get(GATE_SELECTOR)).firewalls || []
+
+const findFirewallByName = async (client, name) =>
+  ((await client.get(`/firewalls?name=${encodeURIComponent(name)}`)).firewalls || [])[0] || null
 
 const serverIp = (server) => (server.public_net && server.public_net.ipv4 && server.public_net.ipv4.ip) || ""
 
@@ -117,13 +157,14 @@ const resolveTargets = (servers, hosts) => {
 }
 
 /**
- * Hiç firewall'u olmayan sunucuya geçici firewall uygulamak 22 dışındaki bütün gelen trafiği
- * keser (firewall'lu sunucuda yalnız izin verilen trafik geçer). Böyle sunucularda SSH zaten
- * herkese açık sayılır; onlara dokunulmaz.
+ * Kalıcı firewall'u olmayan sunucuya geçici firewall uygulamak 22 dışındaki bütün gelen trafiği
+ * keser (firewall'lu sunucuda yalnız izin verilen trafik geçer). Başka çalışmaların geçici
+ * firewall'ları kalıcı sayılmaz. Böyle sunucularda SSH zaten herkese açık; onlara dokunulmaz.
  */
-const splitByBaseFirewall = (servers) => {
-  const hasFirewall = (s) => ((s.public_net && s.public_net.firewalls) || []).length > 0
-  return { gated: servers.filter(hasFirewall), open: servers.filter((s) => !hasFirewall(s)) }
+const splitByBaseFirewall = (servers, gateIds = new Set()) => {
+  const hasBase = (s) =>
+    ((s.public_net && s.public_net.firewalls) || []).some((fw) => !gateIds.has(fw.id))
+  return { gated: servers.filter(hasBase), open: servers.filter((s) => !hasBase(s)) }
 }
 
 const detectPublicIpv4 = async ({ fetchImpl = fetch, services = IP_SERVICES } = {}) => {
@@ -222,8 +263,9 @@ const removeGate = async (client, firewallId, { sleepFn = sleep } = {}) => {
 
 /** İptal edilen ya da post adımı çalışamayan işlerden kalan, süresi dolmuş geçici firewall'ları siler. */
 const cleanupExpired = async (client, nowSec, { sleepFn = sleep } = {}) => {
-  const data = await client.get(`/firewalls?label_selector=${encodeURIComponent(`purpose=${PURPOSE}`)}&per_page=50`)
-  const expired = (data.firewalls || []).filter((fw) => Number((fw.labels && fw.labels.expires) || 0) < nowSec)
+  const expired = (await listGateFirewalls(client)).filter(
+    (fw) => Number((fw.labels && fw.labels.expires) || 0) < nowSec,
+  )
   let removed = 0
   for (const fw of expired) {
     try {
@@ -267,20 +309,24 @@ module.exports = {
   cleanupExpired,
   createClient,
   detectPublicIpv4,
+  findFirewallByName,
   gateBody,
   gateName,
   input,
   isIpv4,
   isRetryable,
+  listGateFirewalls,
   listServers,
   log,
   parseHosts,
+  parseIdList,
+  parseIntInput,
   removeGate,
   resolveTargets,
-  saveState,
   serverIp,
   sleep,
   splitByBaseFirewall,
+  stateWriter,
   waitActions,
   waitForPort,
   warn,

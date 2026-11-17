@@ -22,7 +22,7 @@ jobs:
       - name: Coverage summary action
         run: python3 -m unittest discover -s actions/coverage-summary -v
       - name: SSH gate action
-        run: node --test actions/ssh-gate/lib.test.js
+        run: node --test actions/ssh-gate/lib.test.js actions/ssh-gate/main.test.js
       - name: tf-review plugin
         run: |
           git config --global user.email ci@example.com

@@ -10,6 +10,8 @@ const {
   gateName,
   isRetryable,
   parseHosts,
+  parseIdList,
+  parseIntInput,
   removeGate,
   resolveTargets,
   splitByBaseFirewall,
@@ -55,6 +57,13 @@ describe("hosts", () => {
     assert.deepEqual(gated.map((s) => s.id), [1])
     assert.deepEqual(open.map((s) => s.id), [2])
   })
+
+  it("does not count another run's gate firewall as a base firewall", () => {
+    const servers = [server(1, "a", "1.1.1.1", [10, 99]), server(2, "b", "2.2.2.2", [99])]
+    const { gated, open } = splitByBaseFirewall(servers, new Set([99]))
+    assert.deepEqual(gated.map((s) => s.id), [1])
+    assert.deepEqual(open.map((s) => s.id), [2])
+  })
 })
 
 describe("gate firewall", () => {
@@ -86,6 +95,20 @@ describe("gate firewall", () => {
   })
 })
 
+describe("inputs", () => {
+  it("accepts integers in range and rejects everything else", () => {
+    assert.equal(parseIntInput("wait-seconds", " 300 ", { min: 0, max: 3600 }), 300)
+    for (const bad of ["", "abc", "1.5", "-1", "3601", "5m"]) {
+      assert.throws(() => parseIntInput("wait-seconds", bad, { min: 0, max: 3600 }), /wait-seconds/)
+    }
+  })
+
+  it("parses the stored firewall id list", () => {
+    assert.deepEqual(parseIdList("12, 34,,x"), ["12", "34"])
+    assert.deepEqual(parseIdList(undefined), [])
+  })
+})
+
 describe("hetzner client", () => {
   it("retries on 5xx, then returns the body", async () => {
     let n = 0
@@ -111,9 +134,21 @@ describe("hetzner client", () => {
     assert.equal(n, 1)
   })
 
+  it("retries network errors, then raises a retryable network error", async () => {
+    let n = 0
+    const fetchImpl = async () => {
+      n += 1
+      throw new TypeError("fetch failed")
+    }
+    const client = createClient("t", { fetchImpl, sleepFn: noSleep })
+    await assert.rejects(client.get("/servers"), (e) => e.code === "network" && isRetryable(e))
+    assert.equal(n, 4)
+  })
+
   it("treats limits, locks and rate limits as retryable", () => {
     assert.equal(isRetryable(new HcloudError(403, "resource_limit_exceeded", "")), true)
     assert.equal(isRetryable(new HcloudError(423, "locked", "")), true)
+    assert.equal(isRetryable(new HcloudError(409, "uniqueness_error", "")), true)
     assert.equal(isRetryable(new HcloudError(422, "invalid_input", "")), false)
     assert.equal(isRetryable(new Error("x")), false)
   })

@@ -434,10 +434,13 @@ that SSHes needs its own step (each job runs on a different runner).
 - A server takes at most 5 firewalls; when they are all in use the step retries
   for `wait-seconds` (default 300). A firewall left behind by a killed runner is
   deleted by a later run once its `ttl-minutes` (default 120) pass.
-- `hosts` takes public IPv4s or Hetzner server names; an unknown host fails the
-  step.
+- `hosts` takes public IPv4s or Hetzner server names; an unknown host or an empty
+  list (e.g. unset env variables) fails the step. `wait-seconds` (0–3600) and
+  `ttl-minutes` (30–1440, longer than the slowest deploy) must be integers.
+- Every firewall the step creates is recorded for the post step, including one
+  whose create response was lost (found again by name) or whose rollback failed.
 
-Tests: `node --test actions/ssh-gate/lib.test.js`.
+Tests: `node --test actions/ssh-gate/lib.test.js actions/ssh-gate/main.test.js`.
 
 ## No GitHub-side PR review
 
