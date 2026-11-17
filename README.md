@@ -415,7 +415,7 @@ that SSHes into a server opens the port for itself first:
 
 ```yaml
 - name: Open SSH for this runner
-  uses: Teamfluencer-Dev/.github/actions/ssh-gate@main
+  uses: Teamfluencer-Dev/.github/actions/ssh-gate@<full commit sha> # pinned on purpose
   with:
     hcloud-token: ${{ secrets.HETZNER_API_TOKEN }}
     hosts: ${{ env.BLUE_HOST }},${{ env.GREEN_HOST }}
@@ -423,6 +423,11 @@ that SSHes into a server opens the port for itself first:
 
 Put it before the first `ssh-keyscan` / `ssh` / `rsync` of the job; every job
 that SSHes needs its own step (each job runs on a different runner).
+
+Pin it to a full commit SHA, not `@main`: the step receives the project-wide
+`HETZNER_API_TOKEN`, so a change on `main` must not reach every prod deploy
+silently. After changing the action, bump the SHA in the deploying workflows on
+purpose (they are listed under TA-2252).
 
 - The step creates a temporary Hetzner firewall (label `purpose=gh-ssh-gate`)
   that allows TCP 22 only from the runner's IPv4 and applies it to the listed

@@ -1,6 +1,6 @@
 name: Tests
 
-# Callers pin `actions/coverage-summary@main`, `actions/ssh-gate@main` and the tf-review / tf-bilgi plugins
+# Callers pin `actions/coverage-summary@main` (ssh-gate callers pin a commit SHA) and the tf-review / tf-bilgi plugins
 # ship from `main`, so every change here is checked before it merges.
 on:
   pull_request:
