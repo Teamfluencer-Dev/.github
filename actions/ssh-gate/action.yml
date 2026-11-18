@@ -1,0 +1,33 @@
+name: Hetzner SSH gate
+description: >-
+  Deploy süresince yalnız bu runner'ın IPv4'üne port 22'yi açan geçici bir Hetzner
+  Cloud firewall kurar ve iş bitince (hata ya da iptal olsa da) siler. Sunucuların
+  kalıcı SSH izin listesine yazmaz (TA-2252).
+
+inputs:
+  hcloud-token:
+    description: Hetzner Cloud API token (sunucu okuma, firewall yazma).
+    required: true
+  hosts:
+    description: >-
+      SSH yapılacak sunucuların public IPv4'leri ya da Hetzner adları; virgül ya da
+      boşlukla ayrılır (ör. blue ve green IP'si).
+    required: true
+  wait-seconds:
+    description: >-
+      Sunucuda firewall yeri yoksa (sunucu başına en çok 5 firewall) ya da Hetzner
+      meşgulse en çok bu kadar saniye tekrar dener (0–3600).
+    required: false
+    default: "300"
+  ttl-minutes:
+    description: >-
+      Post adımı çalışamazsa firewall bu kadar dakika sonra sonraki bir çalışmada
+      silinir (30–1440; en uzun deploy'dan uzun olmalı).
+    required: false
+    default: "120"
+
+runs:
+  using: node24
+  main: main.js
+  post: post.js
+  post-if: always()
